@@ -135,3 +135,14 @@ def reorder_tasks(session: Session, project_id: int, task_ids_in_order: list[int
         if task and task.project_id == project_id:
             task.priority_order = index
     session.commit()
+
+
+def update_project(session: Session, project_id: int, **kwargs) -> Project | None:
+    project = session.get(Project, project_id)
+    if not project:
+        return None
+    for key, value in kwargs.items():
+        if hasattr(project, key):
+            setattr(project, key, value)
+    session.commit()
+    return project

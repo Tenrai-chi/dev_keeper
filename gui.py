@@ -16,6 +16,7 @@ from crud import (
     get_all_projects, get_project_by_id,
     get_tasks_by_project, get_task_by_id,
     add_project, add_task, update_task, archive_task,
+    update_project, delete_project
 )
 from test_data import add_test_data
 
@@ -38,11 +39,12 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
+        # Главный горизонтальный сплиттер: левая панель | правая панель
         main_splitter = QSplitter(Qt.Horizontal)
         central_widget.setLayout(QVBoxLayout())
         central_widget.layout().addWidget(main_splitter)
 
-        # ---- Левая панель: проекты ----
+        # ---------- Левая панель: проекты ----------
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(5, 5, 5, 5)
@@ -57,23 +59,40 @@ class MainWindow(QMainWindow):
         self.project_tree.itemClicked.connect(self._on_project_selected)
         left_layout.addWidget(self.project_tree)
 
-        btn_add_project = QPushButton("➕ Добавить проект")
+        # Кнопки управления проектами
+        btn_add_project = QPushButton("➕ Добавить")
         btn_add_project.clicked.connect(self._add_project_dialog)
         left_layout.addWidget(btn_add_project)
 
-        btn_delete_project = QPushButton("🗑️ Удалить проект")
+        btn_delete_project = QPushButton("🗑️ Удалить")
         btn_delete_project.clicked.connect(self._delete_project)
         left_layout.addWidget(btn_delete_project)
 
-        # ---- Правая панель: задачи + заметки ----
+        btn_open_pycharm = QPushButton("🚀 Открыть в PyCharm")
+        btn_open_pycharm.clicked.connect(self._open_in_pycharm)
+        left_layout.addWidget(btn_open_pycharm)
+
+        btn_edit_project = QPushButton("✏️ Редактировать проект")
+        btn_edit_project.clicked.connect(self._edit_project_dialog)
+        left_layout.addWidget(btn_edit_project)
+
+        left_layout.addStretch()
+
+        # ---------- Правая панель: задачи + детали ----------
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Список задач
+        # Верхняя часть: список задач
+        header_layout = QHBoxLayout()
         tasks_label = QLabel("📋 Задачи")
         tasks_label.setStyleSheet("font-weight: bold; font-size: 14px;")
-        right_layout.addWidget(tasks_label)
+        header_layout.addWidget(tasks_label)
+        header_layout.addStretch()
+        self.show_archived_check = QCheckBox("Показать архивные")
+        self.show_archived_check.stateChanged.connect(self._reload_tasks)
+        header_layout.addWidget(self.show_archived_check)
+        right_layout.addLayout(header_layout)
 
         self.task_list = QListWidget()
         self.task_list.itemClicked.connect(self._on_task_selected)
@@ -83,37 +102,75 @@ class MainWindow(QMainWindow):
         task_buttons = QHBoxLayout()
         btn_add_task = QPushButton("➕ Добавить задачу")
         btn_add_task.clicked.connect(self._add_task_dialog)
+        task_buttons.addWidget(btn_add_task)
+
         btn_archive = QPushButton("📦 В архив")
         btn_archive.clicked.connect(self._archive_task)
+        task_buttons.addWidget(btn_archive)
+
         btn_unarchive = QPushButton("↩️ Восстановить")
         btn_unarchive.clicked.connect(self._unarchive_task)
-        task_buttons.addWidget(btn_add_task)
-        task_buttons.addWidget(btn_archive)
         task_buttons.addWidget(btn_unarchive)
+
         right_layout.addLayout(task_buttons)
 
-        # Заметки
-        note_label = QLabel("📝 Заметка к задаче")
-        note_label.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 10px;")
-        right_layout.addWidget(note_label)
+        # Разделитель
+        line = QLabel()
+        line.setFrameStyle(QLabel.HLine)
+        right_layout.addWidget(line)
 
-        self.note_edit = QTextEdit()
-        self.note_edit.setPlaceholderText("Здесь будут заметки по выбранной задаче...")
-        right_layout.addWidget(self.note_edit)
+        # Нижняя часть: детали задачи (редактируемые)
+        detail_label = QLabel("📝 Детали задачи")
+        detail_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        right_layout.addWidget(detail_label)
 
-        btn_save_note = QPushButton("💾 Сохранить заметку")
-        btn_save_note.clicked.connect(self._save_note)
-        right_layout.addWidget(btn_save_note)
+        # Заголовок
+        right_layout.addWidget(QLabel("Заголовок:"))
+        self.detail_title = QLineEdit()
+        self.detail_title.setPlaceholderText("Заголовок задачи")
+        right_layout.addWidget(self.detail_title)
 
-        # Чекбокс "Показать архивные задачи"
-        self.show_archived_check = QCheckBox("Показать архивные задачи")
-        self.show_archived_check.stateChanged.connect(self._reload_tasks)
-        right_layout.addWidget(self.show_archived_check)
+        # Описание
+        right_layout.addWidget(QLabel("Описание:"))
+        self.detail_description = QTextEdit()
+        self.detail_description.setPlaceholderText("Описание задачи...")
+        self.detail_description.setMaximumHeight(80)
+        right_layout.addWidget(self.detail_description)
+
+        # Заметка
+        right_layout.addWidget(QLabel("Заметка:"))
+        self.detail_note = QTextEdit()
+        self.detail_note.setPlaceholderText("Заметки, идеи, ссылки...")
+        self.detail_note.setMaximumHeight(80)
+        right_layout.addWidget(self.detail_note)
+
+        # Код
+        right_layout.addWidget(QLabel("Код:"))
+        self.detail_code = QTextEdit()
+        self.detail_code.setPlaceholderText("Сниппет кода...")
+        self.detail_code.setFontFamily("Courier New")
+        self.detail_code.setMaximumHeight(100)
+        right_layout.addWidget(self.detail_code)
+
+        # Статус и кнопка сохранения
+        status_save_layout = QHBoxLayout()
+        self.detail_status = QLabel("Статус: не выбрано")
+        status_save_layout.addWidget(self.detail_status)
+        status_save_layout.addStretch()
+
+        btn_save = QPushButton("💾 Сохранить изменения")
+        btn_save.clicked.connect(self._save_task_details)
+        status_save_layout.addWidget(btn_save)
+
+        right_layout.addLayout(status_save_layout)
 
         # Добавляем панели в сплиттер
         main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_widget)
         main_splitter.setSizes([300, 700])
+
+        # По умолчанию очищаем детали
+        self._clear_details()
 
     # ---------- Загрузка данных ----------
     def _load_projects(self):
@@ -139,10 +196,10 @@ class MainWindow(QMainWindow):
                 item = QListWidgetItem(task.title)
                 item.setData(Qt.UserRole, task.id)
                 if task.is_archived:
-                    item.setForeground(Qt.gray)  # архивные задачи серым
+                    item.setForeground(Qt.gray)
                 self.task_list.addItem(item)
-
-        self.note_edit.clear()
+        # Очищаем детали, так как проект переключился
+        self._clear_details()
         self.current_task_id = None
 
     def _reload_tasks(self):
@@ -154,38 +211,100 @@ class MainWindow(QMainWindow):
         project_id = item.data(0, Qt.UserRole)
         if project_id is not None:
             self._load_tasks(project_id)
+            # Показываем информацию о проекте в деталях (только для чтения)
+            self._show_project_info(project_id)
 
     def _on_task_selected(self, item: QListWidgetItem):
         task_id = item.data(Qt.UserRole)
         if task_id is not None:
             self.current_task_id = task_id
-            with Session(self.engine) as session:
-                task = get_task_by_id(session, task_id)
-                if task:
-                    self.note_edit.setPlainText(task.note)
+            self._show_task_info(task_id)
+
+    # ---------- Отображение информации в панели деталей ----------
+    def _show_project_info(self, project_id: int):
+        """Заполняет панель деталей информацией о проекте (только чтение)."""
+        with Session(self.engine) as session:
+            project = get_project_by_id(session, project_id)
+            if project:
+                self.detail_title.setText(f"[ПРОЕКТ] {project.display_name}")
+                self.detail_description.setPlainText(project.description)
+                self.detail_note.setPlainText(f"Техническое имя: {project.tech_name}\nПуть: {project.path}")
+                try:
+                    techs = json.loads(project.technologies)
+                    self.detail_code.setPlainText("Технологии: " + ", ".join(techs))
+                except:
+                    self.detail_code.setPlainText("Технологии: (не указаны)")
+                self.detail_status.setText("Статус: проект (только чтение)")
+                # Делаем поля только для чтения
+                self.detail_title.setReadOnly(True)
+                self.detail_description.setReadOnly(True)
+                self.detail_note.setReadOnly(True)
+                self.detail_code.setReadOnly(True)
+
+    def _show_task_info(self, task_id: int):
+        """Заполняет панель деталей данными задачи (редактируемые)."""
+        with Session(self.engine) as session:
+            task = get_task_by_id(session, task_id)
+            if task:
+                self.detail_title.setText(task.title)
+                self.detail_description.setPlainText(task.description)
+                self.detail_note.setPlainText(task.note)
+                self.detail_code.setPlainText(task.code_snippet)
+                status = "архивна" if task.is_archived else "активна"
+                self.detail_status.setText(f"Статус: {status} (ID: {task.id})")
+                # Включаем редактирование
+                self.detail_title.setReadOnly(False)
+                self.detail_description.setReadOnly(False)
+                self.detail_note.setReadOnly(False)
+                self.detail_code.setReadOnly(False)
+
+    def _clear_details(self):
+        """Очищает панель деталей."""
+        self.detail_title.clear()
+        self.detail_description.clear()
+        self.detail_note.clear()
+        self.detail_code.clear()
+        self.detail_status.setText("Статус: не выбрано")
+        self.detail_title.setReadOnly(True)
+        self.detail_description.setReadOnly(True)
+        self.detail_note.setReadOnly(True)
+        self.detail_code.setReadOnly(True)
+
+    # ---------- Сохранение задачи ----------
+    def _save_task_details(self):
+        if self.current_task_id is None:
+            QMessageBox.warning(self, "Нет задачи", "Выберите задачу для редактирования.")
+            return
+        with Session(self.engine) as session:
+            task = get_task_by_id(session, self.current_task_id)
+            if task:
+                task.title = self.detail_title.text()
+                task.description = self.detail_description.toPlainText()
+                task.note = self.detail_note.toPlainText()
+                task.code_snippet = self.detail_code.toPlainText()
+                session.commit()
+                # Обновляем список задач (чтобы обновить заголовок)
+                self._load_tasks(self.current_project_id)
+                QMessageBox.information(self, "Сохранено", "Изменения сохранены.")
 
     # ---------- Добавление проекта ----------
     def _add_project_dialog(self):
-        """Диалог добавления проекта с выбором папки и парсингом requirements."""
         dialog = QDialog(self)
         dialog.setWindowTitle("Добавить проект")
         layout = QFormLayout(dialog)
 
-        # Поле для отображаемого имени
         display_name_edit = QLineEdit()
         layout.addRow("Отображаемое имя:", display_name_edit)
 
-        # Выбор папки
         path_label = QLabel("Папка не выбрана")
         btn_choose = QPushButton("Выбрать папку...")
-        chosen_path = [None]  # замыкание
+        chosen_path = [None]
 
         def choose_folder():
             folder = QFileDialog.getExistingDirectory(dialog, "Выбрать папку проекта")
             if folder:
                 chosen_path[0] = folder
                 path_label.setText(folder)
-                # автоматически предлагаем tech_name из имени папки
                 tech_name = Path(folder).name
                 if not display_name_edit.text():
                     display_name_edit.setText(tech_name)
@@ -194,17 +313,14 @@ class MainWindow(QMainWindow):
         layout.addRow("Путь к проекту:", btn_choose)
         layout.addRow("", path_label)
 
-        # Техническое имя (можно оставить автоматическим)
         tech_name_edit = QLineEdit()
         tech_name_edit.setPlaceholderText("будет взято из имени папки")
         layout.addRow("Техническое имя (опционально):", tech_name_edit)
 
-        # Описание
         description_edit = QPlainTextEdit()
         description_edit.setPlaceholderText("Краткое описание проекта...")
         layout.addRow("Описание:", description_edit)
 
-        # Кнопки
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
@@ -225,7 +341,6 @@ class MainWindow(QMainWindow):
 
             description = description_edit.toPlainText().strip()
 
-            # Парсим requirements
             req_path = Path(chosen_path[0]) / "requirements.txt"
             tech_json = parse_requirements(str(req_path)) if req_path.exists() else "[]"
 
@@ -238,14 +353,12 @@ class MainWindow(QMainWindow):
                     description=description,
                     technologies=tech_json
                 )
-                # Добавляем базовые задачи (шаблон)
                 self._add_default_tasks(session, project.id)
 
             self._load_projects()
             QMessageBox.information(self, "Готово", f"Проект '{display_name}' добавлен.")
 
     def _add_default_tasks(self, session, project_id):
-        """Добавляет стандартные задачи для нового проекта."""
         default_tasks = [
             {"title": "📄 Написать README.md", "description": "Описание проекта, установка, примеры"},
             {"title": "⚙️ Настроить .gitignore", "description": "Добавить стандартные исключения"},
@@ -279,7 +392,6 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.Yes:
             with Session(self.engine) as session:
-                from crud import delete_project
                 delete_project(session, project_id)
             self._load_projects()
             QMessageBox.information(self, "Удалено", "Проект удалён.")
@@ -331,16 +443,6 @@ class MainWindow(QMainWindow):
                 )
             self._load_tasks(self.current_project_id)
 
-    #---------- Сохранение заметки ----------
-    def _save_note(self):
-        if self.current_task_id is None:
-            QMessageBox.warning(self, "Нет задачи", "Выберите задачу, чтобы сохранить заметку.")
-            return
-        new_note = self.note_edit.toPlainText()
-        with Session(self.engine) as session:
-            update_task(session, self.current_task_id, note=new_note)
-        QMessageBox.information(self, "Сохранено", "Заметка обновлена.")
-
     # ---------- Архивация / восстановление ----------
     def _archive_task(self):
         current_item = self.task_list.currentItem()
@@ -353,7 +455,6 @@ class MainWindow(QMainWindow):
         self._load_tasks(self.current_project_id)
 
     def _unarchive_task(self):
-        """Восстанавливает задачу из архива (снимает флаг is_archived)."""
         current_item = self.task_list.currentItem()
         if not current_item:
             QMessageBox.warning(self, "Нет задачи", "Выберите задачу для восстановления.")
@@ -364,3 +465,64 @@ class MainWindow(QMainWindow):
             if task:
                 update_task(session, task_id, is_archived=False, completed_at=None)
         self._load_tasks(self.current_project_id)
+
+    # ---------- Заглушки для новых кнопок ----------
+    def _open_in_pycharm(self):
+        current_item = self.project_tree.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Нет проекта", "Выберите проект.")
+            return
+        project_id = current_item.data(0, Qt.UserRole)
+        with Session(self.engine) as session:
+            project = get_project_by_id(session, project_id)
+            if project:
+                QMessageBox.information(self, "PyCharm", f"Открыть проект '{project.display_name}' в PyCharm\nПуть: {project.path}\n(Функция будет реализована позже)")
+
+    def _edit_project_dialog(self):
+        current_item = self.project_tree.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Нет проекта", "Выберите проект.")
+            return
+        project_id = current_item.data(0, Qt.UserRole)
+        with Session(self.engine) as session:
+            project = get_project_by_id(session, project_id)
+            if not project:
+                return
+            dialog = QDialog(self)
+            dialog.setWindowTitle(f"Редактировать проект: {project.display_name}")
+            layout = QFormLayout(dialog)
+
+            display_name_edit = QLineEdit(project.display_name)
+            layout.addRow("Отображаемое имя:", display_name_edit)
+
+            description_edit = QPlainTextEdit(project.description)
+            layout.addRow("Описание:", description_edit)
+
+            # Технологии — показываем как текстовое поле (можно будет вводить через запятую)
+            try:
+                techs = json.loads(project.technologies)
+                tech_text = ", ".join(techs)
+            except:
+                tech_text = ""
+            tech_edit = QLineEdit(tech_text)
+            tech_edit.setPlaceholderText("Введите технологии через запятую")
+            layout.addRow("Технологии:", tech_edit)
+
+            buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            layout.addRow(buttons)
+
+            if dialog.exec() == QDialog.Accepted:
+                new_display = display_name_edit.text().strip()
+                if not new_display:
+                    QMessageBox.warning(self, "Ошибка", "Имя не может быть пустым.")
+                    return
+                new_desc = description_edit.toPlainText().strip()
+                # Парсим технологии
+                tech_list = [t.strip() for t in tech_edit.text().split(",") if t.strip()]
+                tech_json = json.dumps(tech_list)
+                with Session(self.engine) as session2:
+                    update_project(session2, project_id, display_name=new_display, description=new_desc, technologies=tech_json)
+                self._load_projects()
+                QMessageBox.information(self, "Готово", "Проект обновлён.")
