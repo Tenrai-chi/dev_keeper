@@ -1,54 +1,54 @@
-import os
+import logging
 import sys
+
 from pathlib import Path
-from sqlalchemy.orm import Session
 from PySide6.QtWidgets import QApplication
+from sqlalchemy.orm import Session
 
 from database import init_db
-from test_data import add_test_data
 from gui import MainWindow
+from logger import setup_logging
+from test_data import add_test_data
 
 
 def get_db_path() -> Path:
     """
-    Возвращает путь к файлу БД.
-    Если приложение запущено как скомпилированный .exe, БД будет рядом с exe.
-    Если как скрипт – в корне проекта (рядом с main.py).
+    Возвращает путь к файлу БД
+    Если приложение запущено как исполняемый файл, БД будет рядом с exe
+    Если как скрипт – в корне проекта рядом с main
     """
+
     if getattr(sys, 'frozen', False):
-        # Запущено как .exe (PyInstaller)
+        # Исполняемый файл
         base_dir = Path(sys.executable).parent
     else:
-        # Запущено как Python-скрипт
+        # Скрипт
         base_dir = Path(__file__).parent
-    return base_dir / 'projects.db'
+    return base_dir / 'data' / 'projects.db'
 
 
 def main():
-    db_path = get_db_path()
-    db_exists = db_path.exists()
+    setup_logging()
 
-    if not db_exists:
-        print(f'База данных не найдена. Создаём новую в {db_path}')
+    db_path = get_db_path()
+
+    if not db_path.exists():
+        logging.info(f'База данных не найдена. Создаём новую в {db_path}')
         engine = init_db(str(db_path))
-        # Заполняем тестовыми данными (для демонстрации)
-        with Session(engine) as session:
-            add_test_data(session)
-        print('База данных создана и заполнена тестовыми данными.')
+        logging.info('База данных создана')
+
     else:
-        print(f'База данных найдена. Подключаемся к {db_path}')
-        engine = init_db(str(db_path))   # подключаемся, таблицы уже есть
-        # Проверяем, пустая ли БД (нет проектов) – если да, можно добавить тестовые
+        logging.info(f'База данных найдена. Подключаемся к {db_path}')
+        engine = init_db(str(db_path))
+        logging.info('Подключение выполнено.')
+
+    if '--test-data' in sys.argv:
         with Session(engine) as session:
             from database import Project
             if session.query(Project).count() == 0:
-                print('БД пустая, добавляем тестовые данные.')
                 add_test_data(session)
+                logging.info('Добавлены тестовые данные')
 
-    # Здесь позже будет запуск GUI
-    print('Приложение готово к работе.')
-    # В будущем:
-    # from ui import MainWindow
     app = QApplication(sys.argv)
     window = MainWindow(engine)
     window.show()

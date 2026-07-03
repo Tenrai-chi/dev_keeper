@@ -1,0 +1,49 @@
+{
+  "tasks": [
+    {
+      "title": "Написать README.md",
+      "description": "Описание проекта, установка, примеры",
+      "note": "",
+      "code_snippet": "",
+      "status": "review",
+      "is_favorite": "True",
+      "priority_order": 0
+    },
+    {
+      "title": "Настроить .gitignore",
+      "description": "Добавить стандартные исключения",
+      "note": "",
+      "code_snippet": "",
+      "status": "new",
+      "priority_order": 0,
+      "is_favorite": "False"
+    },
+    {
+      "title": "Написать Dockerfile / docker-compose",
+      "description": "Контейнеризация проекта",
+      "note": "",
+      "code_snippet": "",
+      "status": "new",
+      "priority_order": 0,
+      "is_favorite": "False"
+    },
+    {
+      "title": "Создать виртуальное окружение",
+      "description": "Установить зависимости, указать их в requirements.txt",
+      "note": "",
+      "code_snippet": "",
+      "status": "new",
+      "priority_order": 0,
+      "is_favorite": "False"
+    },
+    {
+      "title": "Тест",
+      "description": "Тест",
+      "note": "Тест",
+      "code_snippet": "print(f'Возвращаемый тип init_db: {type(engine)}')",
+      "status": "review",
+      "is_favorite": "True",
+      "priority_order": 0
+    }
+  ]
+}
