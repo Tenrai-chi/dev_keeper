@@ -37,13 +37,12 @@
       "is_favorite": "False"
     },
     {
-      "title": "Тест",
-      "description": "Тест",
-      "note": "Тест",
-      "code_snippet": "print(f'Возвращаемый тип init_db: {type(engine)}')",
-      "status": "review",
-      "is_favorite": "True",
-      "priority_order": 0
+      "title": "awrhwrh\\WRH",
+      "description": "",
+      "note": "",
+      "code_snippet": "",
+      "status": "new",
+      "is_favorite": "True"
     }
   ]
 }

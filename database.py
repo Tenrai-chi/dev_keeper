@@ -1,11 +1,9 @@
-import json
 import logging
-import re
 
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import create_engine, text, String, Text, Boolean, DateTime, Integer, ForeignKey, Engine
+from sqlalchemy import create_engine, text, String, Text, Boolean, DateTime, ForeignKey, Engine
 from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 
 Base = declarative_base()
@@ -13,9 +11,8 @@ logger = logging.getLogger(__name__)
 
 
 class Project(Base):
-    """
-    Таблица с данными о проектах
-    """
+    """ Таблица с данными о проектах. """
+
     __tablename__ = 'projects'
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -32,7 +29,6 @@ class Project(Base):
         'Task',
         back_populates='project',
         cascade='all, delete-orphan',
-        order_by='Task.priority_order'
     )
 
     def __repr__(self):
@@ -40,9 +36,8 @@ class Project(Base):
 
 
 class Task(Base):
-    """
-    Таблица с задачами проектов
-    """
+    """ Таблица с задачами проектов. """
+
     __tablename__ = 'tasks'
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -53,7 +48,6 @@ class Task(Base):
     note: Mapped[str] = mapped_column(Text, default='')
     code_snippet: Mapped[str] = mapped_column(Text, default='')
     status: Mapped[str] = mapped_column(String(20), default='new')  # new, in_progress, review, done, archived
-    priority_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, onupdate=datetime.now)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -70,7 +64,12 @@ def init_db(db_path: str = 'projects.db') -> Engine:
     """
     Создаёт и настраивает движок SQLite.
     Создаёт таблицы, если их нет.
-    Возвращает движок (engine).
+
+    Args:
+        db_path: путь к бд.
+
+    Returns:
+        Engine: движок (engine)
     """
 
     engine = create_engine(
@@ -88,32 +87,5 @@ def init_db(db_path: str = 'projects.db') -> Engine:
         conn.execute(text('PRAGMA synchronous=NORMAL'))
         conn.commit()
 
-    # Создаём таблицы (если не существуют)
     Base.metadata.create_all(engine)
     return engine
-
-
-def parse_requirements(file_path: str) -> str | None:
-    """
-    Парсит requirements.txt и возвращает JSON-список библиотек.
-    Если файл не найден, возвращает '[]'.
-    """
-
-    libraries = []
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    # Берём имя пакета до первого символа сравнения
-                    pkg = re.split(r'[>=<~!]', line)[0].strip()
-                    if pkg:
-                        libraries.append(pkg)
-    except FileNotFoundError:
-        logger.error(f'Файл requirements не найден')
-        return None
-    except Exception as error:
-        logger.error(f'Непредвиденная ошибка парсинга файла requirements: {error}')
-        return None
-
-    return json.dumps(libraries)
