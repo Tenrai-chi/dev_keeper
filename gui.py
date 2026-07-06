@@ -26,9 +26,40 @@ from crud import (
 )
 
 logger = logging.getLogger(__name__)
+status_translation = {
+    'new': 'Новое',
+    'in_progress': 'В процессе',
+    'done': 'Готово',
+    'archived': 'Архивное'
+}
 
 
 class MainWindow(QMainWindow):
+    STATUS_CHOICES = [
+        ('Новое', 'new'),
+        ('В процессе', 'in_progress'),
+        ('Готово', 'done'),
+        ('Архивное', 'archived'),
+    ]
+
+    @staticmethod
+    def status_to_display(status_code: str) -> str:
+        """ Возвращает русское название статуса по коду """
+
+        for display, code in MainWindow.STATUS_CHOICES:
+            if code == status_code:
+                return display
+        return status_code
+
+    @staticmethod
+    def status_to_code(display_name: str) -> str:
+        """ Возвращает код статуса по русскому названию """
+
+        for display, code in MainWindow.STATUS_CHOICES:
+            if display == display_name:
+                return code
+        return 'new'
+
     def __init__(self, engine):
         """ Инициализация главного окна, загрузка сохраненной темы и запуск интерфейса """
 
@@ -44,6 +75,9 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle('DevKeeper')
         self.setMinimumSize(1000, 700)
+        geometry = self.settings.value('main_window_geometry')
+        if geometry is not None:
+            self.restoreGeometry(geometry)
 
         self._setup_menu()
         self._setup_ui()
@@ -90,7 +124,7 @@ class MainWindow(QMainWindow):
 
         templates_action = QAction('📋 Управление шаблонами задач...', self)
         templates_action.triggered.connect(self._open_template_manager)
-        settings_menu.addSeparator()  # отделяем от темы
+        settings_menu.addSeparator()
         settings_menu.addAction(templates_action)
 
     def _open_template_manager(self):
@@ -275,17 +309,39 @@ class MainWindow(QMainWindow):
         btn_delete_task.clicked.connect(self._delete_task)
         task_btn_layout.addWidget(btn_delete_task)
 
-        layout.addLayout(task_btn_layout)
+        top_widget = QWidget()
+        top_layout = QVBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.addLayout(header_layout)
+        top_layout.addWidget(self.task_list)
+        top_layout.addLayout(task_btn_layout)
 
-        line = QLabel()
-        line.setFrameShape(QFrame.Shape.HLine)
-        layout.addWidget(line)
-
-        # Описание проекта или задачи, индекс 0 для задач, 1 для проектов
         self.details_stack = QStackedWidget()
         self.details_stack.addWidget(self._create_task_details_panel())
         self.details_stack.addWidget(self._create_project_details_panel())
-        layout.addWidget(self.details_stack)
+
+        bottom_widget = QWidget()
+        bottom_layout = QVBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.addWidget(self.details_stack)
+
+        # ----- Сплиттер между верхом и низом -----
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.right_splitter.addWidget(top_widget)
+        self.right_splitter.addWidget(bottom_widget)
+        self.right_splitter.setStretchFactor(0, 1)
+        self.right_splitter.setStretchFactor(1, 2)
+        self.right_splitter.setChildrenCollapsible(False)
+
+        layout.addWidget(self.right_splitter)
+
+        state = self.settings.value('right_splitter_state')
+        if state is not None:
+            self.right_splitter.restoreState(state)
+        else:
+            self.right_splitter.setSizes([300, 600])
+
+        self.right_splitter.splitterMoved.connect(self._save_right_splitter_state)
 
         self._clear_details()
         return widget
@@ -300,26 +356,50 @@ class MainWindow(QMainWindow):
         self.detail_title = QLineEdit()
         layout.addWidget(self.detail_title)
 
-        layout.addWidget(QLabel('Описание:'))
+        # ---- Сплиттер для трёх полей ----
+        fields_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Описание
+        desc_widget = QWidget()
+        desc_layout = QVBoxLayout(desc_widget)
+        desc_layout.addWidget(QLabel('Описание:'))
         self.detail_description = QTextEdit()
-        self.detail_description.setMaximumHeight(80)
-        layout.addWidget(self.detail_description)
+        self.detail_description.setMinimumHeight(60)
+        desc_layout.addWidget(self.detail_description)
+        fields_splitter.addWidget(desc_widget)
 
-        layout.addWidget(QLabel('Заметка:'))
+        # Заметка
+        note_widget = QWidget()
+        note_layout = QVBoxLayout(note_widget)
+        note_layout.addWidget(QLabel('Заметка:'))
         self.detail_note = QTextEdit()
-        self.detail_note.setMaximumHeight(80)
-        layout.addWidget(self.detail_note)
+        self.detail_note.setMinimumHeight(60)
+        note_layout.addWidget(self.detail_note)
+        fields_splitter.addWidget(note_widget)
 
-        layout.addWidget(QLabel('Код:'))
+        # Код
+        code_widget = QWidget()
+        code_layout = QVBoxLayout(code_widget)
+        code_layout.addWidget(QLabel('Код:'))
         self.detail_code = QTextEdit()
         self.detail_code.setFontFamily('Courier New')
-        self.detail_code.setMaximumHeight(100)
-        layout.addWidget(self.detail_code)
+        self.detail_code.setMinimumHeight(80)
+        code_layout.addWidget(self.detail_code)
+        fields_splitter.addWidget(code_widget)
 
+        fields_splitter.setStretchFactor(0, 1)
+        fields_splitter.setStretchFactor(1, 1)
+        fields_splitter.setStretchFactor(2, 2)
+        fields_splitter.setChildrenCollapsible(False)
+
+        layout.addWidget(fields_splitter)
+
+        # Статус и кнопка
         status_layout = QHBoxLayout()
         status_layout.addWidget(QLabel('Статус:'))
         self.status_combo = QComboBox()
-        self.status_combo.addItems(['new', 'in_progress', 'review', 'done', 'archived'])
+        for display_name, _ in self.STATUS_CHOICES:
+            self.status_combo.addItem(display_name)
         status_layout.addWidget(self.status_combo)
         status_layout.addStretch()
         layout.addLayout(status_layout)
@@ -327,6 +407,18 @@ class MainWindow(QMainWindow):
         btn_save = QPushButton('💾 Сохранить изменения')
         btn_save.clicked.connect(self._save_task_details)
         layout.addWidget(btn_save)
+
+        # Восстанавливаем состояние
+        state = self.settings.value('task_fields_splitter_state')
+        if state is not None:
+            fields_splitter.restoreState(state)
+        else:
+            fields_splitter.setSizes([150, 150, 300])
+
+        fields_splitter.splitterMoved.connect(self._save_task_fields_splitter_state)
+
+        # Сохраняем ссылку для доступа в методах сохранения
+        self.task_fields_splitter = fields_splitter
 
         return widget
 
@@ -392,7 +484,7 @@ class MainWindow(QMainWindow):
             tasks = get_tasks_by_project(session, project_id, include_archived=include_archived)
             for task in tasks:
                 star = '⭐ ' if task.is_favorite else ''
-                display_text = f'{star}{task.title} [{task.status}]'
+                display_text = f'{star}{task.title} [{self.status_to_display(task.status)}]'
                 item = QListWidgetItem(display_text)
                 item.setData(Qt.ItemDataRole.UserRole, task.id)
 
@@ -470,7 +562,8 @@ class MainWindow(QMainWindow):
                 self.detail_description.setPlainText(task.description)
                 self.detail_note.setPlainText(task.note)
                 self.detail_code.setPlainText(task.code_snippet)
-                idx = self.status_combo.findText(task.status)
+                display_name = self.status_to_display(task.status)
+                idx = self.status_combo.findText(display_name)
                 if idx >= 0:
                     self.status_combo.setCurrentIndex(idx)
                 self.detail_title.setReadOnly(False)
@@ -511,7 +604,8 @@ class MainWindow(QMainWindow):
                 task.description = self.detail_description.toPlainText()
                 task.note = self.detail_note.toPlainText()
                 task.code_snippet = self.detail_code.toPlainText()
-                new_status = self.status_combo.currentText()
+                new_status_display = self.status_combo.currentText()
+                new_status = self.status_to_code(new_status_display)
                 if task.status != new_status:
                     change_task_status(session, self.current_task_id, new_status)
                 else:
@@ -973,6 +1067,20 @@ class MainWindow(QMainWindow):
         else:
             super().keyPressEvent(event)
 
+    def _save_right_splitter_state(self):
+        if self.right_splitter:
+            self.settings.setValue('right_splitter_state', self.right_splitter.saveState())
+
+    def _save_task_fields_splitter_state(self):
+        if hasattr(self, 'task_fields_splitter') and self.task_fields_splitter:
+            self.settings.setValue('task_fields_splitter_state', self.task_fields_splitter.saveState())
+
+    def closeEvent(self, event):
+        self._save_right_splitter_state()
+        self._save_task_fields_splitter_state()
+        self.settings.setValue('main_window_geometry', self.saveGeometry())
+        super().closeEvent(event)
+
 
 class TemplateTasksDialog(QDialog):
     def __init__(self, tasks_data, parent=None):
@@ -1016,11 +1124,11 @@ class TemplateTasksDialog(QDialog):
 class TemplateManagerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent = parent  # для доступа к методам загрузки/сохранения
+        self.parent = parent
         self.setWindowTitle('Управление шаблонными задачами')
         self.setMinimumSize(500, 400)
 
-        self.tasks = []  # список словарей
+        self.tasks = []
 
         layout = QVBoxLayout(self)
 
@@ -1131,10 +1239,14 @@ class TemplateTaskEditDialog(QDialog):
         layout.addRow('Код:', self.code_edit)
 
         self.status_combo = QComboBox()
-        self.status_combo.addItems(['new', 'in_progress', 'review', 'done', 'archived'])
-        idx = self.status_combo.findText(self.task_data.get('status', 'new'))
-        if idx >= 0:
-            self.status_combo.setCurrentIndex(idx)
+        for display_name, _ in MainWindow.STATUS_CHOICES:
+            self.status_combo.addItem(display_name)
+            if task_data:
+                status_code = task_data.get('status', 'new')
+                display_name = MainWindow.status_to_display(status_code)
+                idx = self.status_combo.findText(display_name)
+                if idx >= 0:
+                    self.status_combo.setCurrentIndex(idx)
         layout.addRow('Статус:', self.status_combo)
 
         self.fav_check = QCheckBox()
@@ -1152,13 +1264,14 @@ class TemplateTaskEditDialog(QDialog):
         layout.addRow(button_box)
 
     def get_task_data(self):
+        status_display = self.status_combo.currentText()
+        status_code = MainWindow.status_to_code(status_display)
         return {
             'title': self.title_edit.text().strip(),
             'description': self.desc_edit.toPlainText().strip(),
             'note': self.note_edit.toPlainText().strip(),
             'code_snippet': self.code_edit.toPlainText().strip(),
-            'status': self.status_combo.currentText(),
+            'status': status_code,
             'is_favorite': 'True' if self.fav_check.isChecked() else 'False',
-            # priority_order и другие поля можно добавить позже, если нужны
             'priority_order': 0,
         }
