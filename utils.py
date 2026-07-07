@@ -116,7 +116,7 @@ def init_user_data():
     """
     Инициализирует пользовательские данные при первом запуске.
     - Создаёт папку AppData.
-    - Копирует файл шаблонов из ресурсов (если есть) в AppData.
+    - Копирует файл шаблонов из ресурсов (если есть) в AppData или создает новый.
     """
 
     if not is_frozen():
@@ -125,13 +125,11 @@ def init_user_data():
     tasks_path = get_default_tasks_path()
 
     if not tasks_path.exists():
-        # Пытаемся скопировать шаблон из ресурсов
         src = get_resources_dir() / 'files' / 'default_tasks.json'
         if src.exists():
             shutil.copy(src, tasks_path)
             logger.info(f'Шаблон скопирован из {src} в {tasks_path}')
         else:
-            # Создаём пустой шаблон
             with open(tasks_path, 'w', encoding='utf-8') as file:
                 json.dump({'tasks': []}, file, ensure_ascii=False, indent=2)
             logger.info(f'Создан пустой файл шаблонов: {tasks_path}')

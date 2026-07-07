@@ -1168,7 +1168,6 @@ class MainWindow(QMainWindow):
             self._load_tasks(self.current_project_id)
             QMessageBox.information(self, 'Готово', f'Добавлено {len(selected)} задач.')
 
-
     # -------- Настройки и справка --------
     def _open_settings_dialog(self) -> None:
         """ Открывает диалог общих настроек. """
