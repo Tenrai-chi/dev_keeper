@@ -6,11 +6,12 @@ from PySide6.QtWidgets import QApplication
 from database import init_db
 from gui import MainWindow
 from logger import setup_logging
-from utils import get_db_path
+from utils import get_db_path, init_user_data
 
 
 def main():
     setup_logging()
+    init_user_data()
 
     db_path = get_db_path()
 

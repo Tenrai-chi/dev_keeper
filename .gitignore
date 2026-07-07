@@ -16,3 +16,6 @@ database.db
 *.iml
 *.xml
 
+build/
+dist/
+

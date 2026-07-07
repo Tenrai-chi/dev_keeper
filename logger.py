@@ -1,19 +1,36 @@
 import logging
 import sys
+import os
 
 from datetime import datetime
 from pathlib import Path
 
 
+def get_app_data_dir() -> Path:
+    """ Возвращает папку для хранения данных приложения в AppData. """
+
+    if sys.platform == 'win32':
+        base = Path(os.environ.get('APPDATA', '')) / 'DevKeeper'
+    else:
+        base = Path.home() / '.local' / 'share' / 'DevKeeper'
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
 def get_logs_dir() -> Path:
-    """ Возвращает путь к папке logs """
+    """
+    Возвращает путь к папке logs.
+    - При разработке: logs/ (рядом с файлом)
+    - В собранном приложении: %APPDATA%/DevKeeper/logs
+    Returns:
+        Path: путь к папке с логами
+    """
 
     if getattr(sys, 'frozen', False):
-        base_dir = Path(sys.executable).parent
+        logs_dir = get_app_data_dir() / 'logs'
     else:
-        base_dir = Path(__file__).parent
-    logs_dir = base_dir / 'logs'
-    logs_dir.mkdir(exist_ok=True)
+        logs_dir = Path(__file__).parent / 'logs'
+    logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir
 
 

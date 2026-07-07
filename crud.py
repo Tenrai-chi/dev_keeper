@@ -1,8 +1,8 @@
 import logging
 
 from datetime import datetime
-from sqlalchemy.orm import Session
 from sqlalchemy import select, case
+from sqlalchemy.orm import Session
 
 from database import Project, Task
 

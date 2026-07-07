@@ -4,7 +4,7 @@ import subprocess
 
 from pathlib import Path
 from PySide6.QtCore import Qt, QSettings
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTreeWidget, QTreeWidgetItem, QListWidget,
@@ -24,7 +24,8 @@ from crud import (
 )
 from utils import (
     parse_requirements, status_to_display, status_to_code,
-    get_default_tasks_path, STATUS_CHOICES, load_templates, save_templates
+    get_default_tasks_path, STATUS_CHOICES, load_templates, save_templates,
+    get_icon_path
 )
 from help_content import get_help_html
 from themes import get_dark_theme, get_light_theme
@@ -55,6 +56,12 @@ class MainWindow(QMainWindow):
         geometry = self.settings.value('main_window_geometry')
         if geometry is not None:
             self.restoreGeometry(geometry)
+
+        icon_path = get_icon_path()
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
+        else:
+            logger.warning(f'Иконка не найдена: {icon_path}')
 
         self._setup_menu()
         self._setup_ui()
