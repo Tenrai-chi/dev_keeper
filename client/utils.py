@@ -30,7 +30,7 @@ def get_dev_dir() -> Path:
     if is_frozen():
         return Path(sys.executable).parent
     else:
-        return Path(__file__).parent
+        return Path(__file__).parent.parent
 
 
 def get_internal_dir() -> Path:

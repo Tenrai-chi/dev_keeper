@@ -38,7 +38,7 @@ def setup_logging(level: str = None) -> None:
     """
     Настраивает логирование: вывод в консоль и в файл с ротацией по дням.
     Если уровень не указан, то:
-        - для .exe: WARNING
+        - для .exe: INFO
         - для скрипта: INFO
     Args:
         level: заданный уровень логирования
@@ -46,7 +46,7 @@ def setup_logging(level: str = None) -> None:
 
     if level is None:
         if getattr(sys, 'frozen', False):
-            level = logging.WARNING
+            level = logging.INFO
         else:
             level = logging.INFO
 
@@ -72,8 +72,9 @@ def setup_logging(level: str = None) -> None:
     root_logger.addHandler(file_handler)
 
     # Настройка для записи в консоль
-    if not getattr(sys, 'frozen', False) or level <= logging.WARNING:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    logging.info(f'Сервер: логирование настроено. Уровень: {logging.getLevelName(level)}. Файл: {log_file}')

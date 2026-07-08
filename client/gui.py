@@ -1,6 +1,7 @@
 import json
 import logging
 import subprocess
+import sys
 
 from pathlib import Path
 from PySide6.QtCore import Qt, QSettings
@@ -13,36 +14,44 @@ from PySide6.QtWidgets import (
     QDialogButtonBox, QFormLayout, QCheckBox, QComboBox,
     QStackedWidget, QApplication, QListWidgetItem
 )
-from sqlalchemy.orm import Session
 
-from crud import (
-    get_all_projects, get_project_by_id, add_project, delete_project,
-    update_project, toggle_favorite, get_tasks_by_project,
-    get_task_by_id, add_task, update_task,
-    change_task_status, search_projects, update_parent_status,
-    archive_subtree, unarchive_subtree, delete_task_with_children
-)
-from utils import (
+from client.utils import (
     parse_requirements, status_to_display, status_to_code,
     get_default_tasks_path, STATUS_CHOICES, load_templates, save_templates,
     get_icon_path
 )
-from help_content import get_help_html
-from themes import get_dark_theme, get_light_theme
-
+from client.help_content import get_help_html
+from client.themes import get_dark_theme, get_light_theme
+from client.api import APIClient
 
 logger = logging.getLogger(__name__)
 program_version = '1.0'
 
 
+def require_user(func):
+    """
+    Декоратор для методов, которые требуют наличия current_user_id.
+    Если пользователь не выбран, показывает предупреждение и прерывает выполнение.
+    """
+
+    def wrapper(self, *args, **kwargs):
+        if not self.current_user_id:
+            QMessageBox.warning(self, 'Нет пользователя',
+                                'Это действие требует выбора пользователя. '
+                                'Пожалуйста, выберите пользователя в настройках или при запуске.')
+            return None
+        return func(self, *args, **kwargs)
+    return wrapper
+
+
 class MainWindow(QMainWindow):
     """ Главное рабочее окно приложения. """
 
-    def __init__(self, engine):
+    def __init__(self):
         """ Инициализирует главное окно, загружает сохраненную тему и настраивает интерфейс """
 
         super().__init__()
-        self.engine = engine
+
         self.current_project_id = None
         self.current_task_id = None
         self.settings = QSettings('DevKeeper', 'Settings')
@@ -50,6 +59,14 @@ class MainWindow(QMainWindow):
         self.current_search_text = ''
         self.right_splitter = None
         self.task_fields_splitter = None
+
+        # Настройка подключения к API
+        self.server_url = self.settings.value('server_url', 'http://localhost:8000/api', type=str)
+        self.api_client = APIClient(str(self.server_url))
+
+        # Настройка пользователя
+        self.current_user_id = int(self.settings.value('user_id', None, type=int))
+        self.current_user_name = None
 
         self.setWindowTitle(f'DevKeeper v{program_version}')
         self.setMinimumSize(1000, 700)
@@ -65,8 +82,127 @@ class MainWindow(QMainWindow):
 
         self._setup_menu()
         self._setup_ui()
+        self.status_bar = self.statusBar()
+        self.user_label = QLabel()
+        self.user_label.mouseDoubleClickEvent = lambda event: self._change_user()
+        self.status_bar.addPermanentWidget(self.user_label)
         self._apply_theme(str(self.current_theme))
+        if not self.current_user_id:
+            self._select_user()
+        else:
+            self._verify_user()
+        self._update_user_label()
         self._load_projects()
+
+    # -------- Подгрузка данных и подключение пользователей --------
+    def _select_user(self):
+        """ Диалог выбора или создания пользователя. """
+
+        logger.error(f'ЗАПУСК _select_user')
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Выбор пользователя')
+        layout = QVBoxLayout(dialog)
+
+        label = QLabel('Выберите или введите имя пользователя:')
+        layout.addWidget(label)
+
+        combo = QComboBox()
+        combo.setEditable(True)
+        layout.addWidget(combo)
+
+        name_to_id = {}
+        try:
+            users = self.api_client.get_users()
+            for user in users:
+                combo.addItem(user['name'], user['id'])
+                name_to_id[user['name']] = user['id']
+                logger.error(f'ПОЛУЧЕН ПОЛЬЗОВАТЕЛЬ: {user["id"]}, {user["name"]}')
+        except Exception as e:
+            QMessageBox.warning(self, 'Ошибка', f'Не удалось загрузить пользователей:\n{e}')
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btn_box.accepted.connect(dialog.accept)
+        btn_box.rejected.connect(dialog.reject)
+        layout.addWidget(btn_box)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            logger.error('dialog был принят (Accepted)')
+
+            entered_name = combo.currentText().strip()
+            selected_id = combo.currentData()
+            logger.error(f'entered_name {entered_name}')
+            logger.error(f'selected_id {selected_id}')
+
+            if entered_name in name_to_id:
+                # Выбран существующий пользователь
+                self.current_user_id = selected_id
+                self.current_user_name = entered_name
+                logger.error(f'Выбран существующий пользователь: {self.current_user_name} (ID {self.current_user_id})')
+
+            else:
+                if not entered_name:
+                    QMessageBox.warning(self, 'Ошибка', 'Имя не может быть пустым.')
+                    return self._select_user()
+
+                try:
+                    logger.error(f'Отправка запроса создания пользователя с именем {entered_name}')
+                    new_user = self.api_client.create_user(entered_name)
+                    logger.error(f'Ответ сервера: {new_user}')
+
+                    self.current_user_id = new_user['id']
+                    self.current_user_name = new_user['name']
+                    logger.error(f'Создан новый пользователь: {self.current_user_name} (ID {self.current_user_id})')
+                except Exception as e:
+                    QMessageBox.critical(self, 'Ошибка', f'Не удалось создать пользователя:\n{e}')
+                    return self._select_user()
+
+            self.settings.setValue('user_id', self.current_user_id)
+            self._update_user_label()
+            self._load_projects()
+        else:
+            sys.exit()
+
+    def _update_user_label(self) -> None:
+        """ Обновляет отображение имени текущего пользователя в статусной строке. """
+
+        if self.current_user_id is not None and self.current_user_name:
+            self.user_label.setText(f"😽 {self.current_user_name}  |  🔄 (двойной клик для смены)")
+        else:
+            self.user_label.setText("😽 Пользователь не выбран")
+
+    def _change_user(self) -> None:
+        """Позволяет сменить текущего пользователя."""
+
+        if self.current_user_id:
+            reply = self._question_dialog(
+                'Смена пользователя',
+                'Вы уверены, что хотите сменить пользователя? Текущий сеанс будет завершён.'
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        self.settings.remove('user_id')
+        self.current_user_id = None
+        self.current_user_name = None
+        self._select_user()
+
+    def _verify_user(self):
+        """Проверяет, что пользователь с current_user_id существует на сервере."""
+
+        try:
+            users = self.api_client.get_users()
+            user_ids = [u['id'] for u in users]
+            if self.current_user_id not in user_ids:
+                QMessageBox.warning(self, 'Ошибка', 'Пользователь не найден на сервере.')
+                self._select_user()
+            else:
+                for u in users:
+                    if u['id'] == self.current_user_id:
+                        self.current_user_name = u['name']
+                        break
+        except Exception as e:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось проверить пользователя:\n{e}')
+            self._select_user()
 
     # -------- Настройка интерфейса --------
     def _setup_menu(self) -> None:
@@ -342,6 +478,9 @@ class MainWindow(QMainWindow):
         status_layout.addStretch()
         layout.addLayout(status_layout)
 
+        self.detail_private_check = QCheckBox('🔒 Приватная задача (только для вас)')
+        layout.addWidget(self.detail_private_check)
+
         btn_save = QPushButton('💾 Сохранить изменения')
         btn_save.clicked.connect(self._save_task_details)
         layout.addWidget(btn_save)
@@ -396,6 +535,7 @@ class MainWindow(QMainWindow):
         return widget
 
     # -------- Методы загрузки данных --------
+    @require_user
     def _load_projects(self) -> None:
         """
         Загружает все проекты и выводит в дереве проектов.
@@ -403,21 +543,22 @@ class MainWindow(QMainWindow):
         """
 
         self.project_tree.clear()
-        with Session(self.engine) as session:
-            if self.current_search_text:
-                projects = search_projects(session, self.current_search_text)
-            else:
-                projects = get_all_projects(session)
+        try:
+            projects = self.api_client.get_all_projects(self.current_user_id)
             for project in projects:
-                text = f'⭐ {project.display_name}' if project.is_favorite else project.display_name
+                favorite = '⭐ ' if project["is_favorite"] else ''
+                private = '🔒 ' if project["is_private"] else ''
+                text = f'{favorite}{private}{project["display_name"]}'
                 item = QTreeWidgetItem([text])
-                item.setData(0, Qt.ItemDataRole.UserRole, project.id)
+                item.setData(0, Qt.ItemDataRole.UserRole, project['id'])
                 self.project_tree.addTopLevelItem(item)
+            if self.project_tree.topLevelItemCount() > 0:
+                self.project_tree.setCurrentItem(self.project_tree.topLevelItem(0))
+                self._on_project_selected(self.project_tree.topLevelItem(0))
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить проекты:\n{error}')
 
-        if self.project_tree.topLevelItemCount() > 0:
-            self.project_tree.setCurrentItem(self.project_tree.topLevelItem(0))
-            self._on_project_selected(self.project_tree.topLevelItem(0))
-
+    @require_user
     def _load_tasks(self, project_id: int) -> None:
         """
         Загружает задачи выбранного проекта и строит иерархическое дерево.
@@ -428,29 +569,34 @@ class MainWindow(QMainWindow):
         self.task_tree.clear()
         self.current_project_id = project_id
         include_archived = self.show_archived_check.isChecked()
-        with Session(self.engine) as session:
-            tasks = get_tasks_by_project(session, project_id, include_archived=include_archived)
+        try:
+            tasks = self.api_client.get_tasks(project_id=project_id,
+                                              user_id=self.current_user_id,
+                                              include_archived=include_archived)
             items_map = {}
 
             for task in tasks:
                 item = QTreeWidgetItem()
-                item.setData(0, Qt.ItemDataRole.UserRole, task.id)
-                star = '⭐ ' if task.is_favorite else ''
-                status_display = status_to_display(task.status)
-                text = f'{star}{task.title} [{status_display}]'
-                item.setText(0, text)  # теперь текст в колонке 0
-                self._set_item_color(item, task.status)
-                items_map[task.id] = item
+                item.setData(0, Qt.ItemDataRole.UserRole, task['id'])
+                favorite = '⭐ ' if task['is_favorite'] else ''
+                private = '🔒 ' if task['is_private'] else ''
+                status_display = status_to_display(task['status'])
+                text = f'{favorite}{private}{task["title"]} [{status_display}]'
+                item.setText(0, text)
+                self._set_item_color(item, task['status'])
+                items_map[task['id']] = item
 
             for task in tasks:
-                item = items_map[task.id]
-                if task.parent_id is not None and task.parent_id in items_map:
-                    parent_item = items_map[task.parent_id]
+                item = items_map[task['id']]
+                if task['parent_id'] is not None and task['parent_id'] in items_map:
+                    parent_item = items_map[task['parent_id']]
                     parent_item.addChild(item)
                 else:
                     self.task_tree.addTopLevelItem(item)
 
             self.task_tree.expandAll()
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить задачи:\n{error}')
 
         self._clear_details()
         self.current_task_id = None
@@ -483,6 +629,7 @@ class MainWindow(QMainWindow):
             item: выбранный элемент.
             column: номер колонки.
         """
+
         if column == 0:
             task_id = item.data(0, Qt.ItemDataRole.UserRole)
             if task_id is not None:
@@ -490,36 +637,40 @@ class MainWindow(QMainWindow):
                 self._show_task_info(task_id)
 
     # -------- Методы отображения деталей --------
+    @require_user
     def _show_project_info(self, project_id: int) -> None:
         """
-        отображает информацию о проекте в панели деталей проекта.
+        Отображает информацию о проекте в панели деталей проекта.
         Args:
             project_id: ID проекта.
         """
 
         self.details_stack.setCurrentIndex(1)
-        with Session(self.engine) as session:
-            project = get_project_by_id(session, project_id)
+        try:
+            project = self.api_client.get_project_by_id(project_id=project_id,
+                                                        user_id=self.current_user_id)
             if project:
-                self.proj_display_name.setText(project.display_name)
-                self.proj_tech_name.setText(project.tech_name)
-                self.proj_path.setText(project.path)
-                self.proj_description.setPlainText(project.description)
+                self.proj_display_name.setText(project['display_name'])
+                self.proj_tech_name.setText(project['tech_name'])
+                self.proj_path.setText(project['path'])
+                self.proj_description.setPlainText(project['description'])
                 try:
-                    techs = json.loads(project.technologies)
+                    techs = json.loads(project['technologies'])
                     self.proj_technologies.setPlainText(', '.join(techs))
                 except json.JSONDecodeError:
                     self.proj_technologies.setPlainText('(ошибка загрузки)')
-                    logger.warning(f'Не удалось разобрать технологии проекта {project.id}: {project.technologies}')
+                    logger.warning(f'Не удалось разобрать технологии проекта {project["id"]}: {project["technologies"]}')
                     QMessageBox.warning(
                         self,
                         'Ошибка данных',
-                        f'Не удалось прочитать список технологий для проекта "{project.display_name}".\n'
+                        f'Не удалось прочитать список технологий для проекта "{project['display_name']}".\n'
                         'Данные повреждены. Вы можете исправить их вручную в режиме редактирования.'
                     )
                 except Exception as error:
-                    logger.warning(f'Не удалось разобрать технологии проекта {project.id}: {project.technologies}.'
+                    logger.warning(f'Не удалось разобрать технологии проекта {project["id"]}: {project["technologies"]}.'
                                    f'По причине: {error}')
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить информацию о проекте:\n{error}')
 
     def _show_task_info(self, task_id: int) -> None:
         """
@@ -529,14 +680,16 @@ class MainWindow(QMainWindow):
         """
 
         self.details_stack.setCurrentIndex(0)
-        with Session(self.engine) as session:
-            task = get_task_by_id(session, task_id)
+        try:
+            task = self.api_client.get_task_by_id(task_id=task_id,
+                                                  user_id=self.current_user_id)
             if task:
-                self.detail_title.setText(task.title)
-                self.detail_description.setPlainText(task.description)
-                self.detail_note.setPlainText(task.note)
-                self.detail_code.setPlainText(task.code_snippet)
-                display_name = status_to_display(task.status)
+                self.detail_title.setText(task['title'])
+                self.detail_description.setPlainText(task['description'])
+                self.detail_note.setPlainText(task['note'])
+                self.detail_code.setPlainText(task['code_snippet'])
+                self.detail_private_check.setChecked(task['is_private'])
+                display_name = status_to_display(task['status'])
                 idx = self.status_combo.findText(display_name)
                 if idx >= 0:
                     self.status_combo.setCurrentIndex(idx)
@@ -545,6 +698,8 @@ class MainWindow(QMainWindow):
                 self.detail_note.setReadOnly(False)
                 self.detail_code.setReadOnly(False)
                 self.status_combo.setEnabled(True)
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить информацию о задаче:\n{error}')
 
     def _clear_details(self) -> None:
         """ Очищает панель деталей и переводит в режим "только для чтения" для просмотра информации о проекте """
@@ -575,25 +730,37 @@ class MainWindow(QMainWindow):
         if self.current_task_id is None:
             QMessageBox.warning(self, 'Нет задачи', 'Выберите задачу для редактирования.')
             return
-        with Session(self.engine) as session:
-            update_task(session, self.current_task_id,
-                        title=self.detail_title.text(),
-                        description=self.detail_description.toPlainText(),
-                        note=self.detail_note.toPlainText(),
-                        code_snippet=self.detail_code.toPlainText())
-            # Обновляем статус, если изменился
+        try:
+            update_data = {
+                'title': self.detail_title.text(),
+                'description': self.detail_description.toPlainText(),
+                'note': self.detail_note.toPlainText(),
+                'code_snippet': self.detail_code.toPlainText(),
+                'is_private': self.detail_private_check.isChecked(),
+            }
+            update_task = self.api_client.update_task(
+                task_id=self.current_task_id,
+                data=update_data,
+                user_id=self.current_user_id
+            )
+
+            # Обновление статуса статус, если изменился
             new_status_display = self.status_combo.currentText()
             new_status = status_to_code(new_status_display)
-            task = get_task_by_id(session, self.current_task_id)
-            if task and task.status != new_status:
-                change_task_status(session, self.current_task_id, new_status)
-            # Обновляем родителя
-            if task and task.parent_id:
-                logger.info(
-                    f"Вызов update_parent_status для parent_id={task.parent_id} (сохранение задачи), id={task.id}")
-                update_parent_status(session, task.parent_id)
-            self._load_tasks(self.current_project_id)
 
+            if update_task['status'] != new_status:
+                self.api_client.change_task_status(
+                    task_id=self.current_task_id,
+                    new_status=new_status,
+                    user_id=self.current_user_id
+                )
+
+            # Обновляем задачи
+            self._load_tasks(self.current_project_id)
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось сохранить изменения:\n{error}')
+
+    @require_user
     def _add_project_dialog(self) -> None:
         """
         Открывает диалог добавления нового проекта.
@@ -634,6 +801,9 @@ class MainWindow(QMainWindow):
         description_edit.setPlaceholderText('Краткое описание проекта...')
         layout.addRow('Описание:', description_edit)
 
+        private_check = QCheckBox('Сделать проект приватным (только для вас)')
+        layout.addRow(private_check)
+
         button_box = self._create_button_box()
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
@@ -668,24 +838,24 @@ class MainWindow(QMainWindow):
                             'Не удалось прочитать файл requirements.txt.\n'
                             'Технологии не будут добавлены. Вы сможете добавить их позже вручную.'
                         )
-                else:
-                    pass
-            else:
-                pass
 
-            with Session(self.engine) as session:
+            try:
                 project_data = {
                     'tech_name': tech_name,
                     'display_name': display_name,
                     'path': selected_path if selected_path else '',
                     'description': description,
                     'technologies': tech_json,
+                    'owner_id': self.current_user_id,
+                    'is_private': private_check.isChecked(),
                 }
-                add_project(session=session, project_data=project_data)
+                self.api_client.add_project(project_data, self.current_user_id)
+                self._load_projects()
+                QMessageBox.information(self, 'Готово', f'Проект "{display_name}" добавлен.')
+            except Exception as error:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось создать проект:\n{error}')
 
-            self._load_projects()
-            QMessageBox.information(self, 'Готово', f'Проект "{display_name}" добавлен.')
-
+    @require_user
     def _add_task_dialog(self) -> None:
         """
         Открывает диалог добавления новой задачи в текущий проект.
@@ -718,11 +888,21 @@ class MainWindow(QMainWindow):
         # Выбор родительской задачи
         parent_combo = QComboBox()
         parent_combo.addItem('(нет родителя)', None)
-        with Session(self.engine) as session:
-            tasks = get_tasks_by_project(session, self.current_project_id, include_archived=True)
+        try:
+            tasks = self.api_client.get_tasks(
+                project_id=self.current_project_id,
+                user_id=self.current_user_id,
+                include_archived=True
+            )
             for task in tasks:
-                parent_combo.addItem(f'{task.title} (ID {task.id})', task.id)
+                parent_combo.addItem(f'{task["title"]} (ID {task["id"]})', task["id"])
+        except Exception as error:
+            QMessageBox.warning(self, 'Ошибка загрузки задач',
+                                f'Не удалось загрузить список задач для выбора родителя:\n{error}')
         layout.addRow('Родительская задача:', parent_combo)
+
+        private_check = QCheckBox('Сделать задачу приватной (только для вас)')
+        layout.addRow(private_check)
 
         button_box = self._create_button_box()
         button_box.accepted.connect(dialog.accept)
@@ -736,7 +916,7 @@ class MainWindow(QMainWindow):
                 return
 
             parent_id = parent_combo.currentData()
-            with Session(self.engine) as session:
+            try:
                 task_data = {
                     'project_id': self.current_project_id,
                     'title': title,
@@ -745,18 +925,21 @@ class MainWindow(QMainWindow):
                     'code_snippet': code_edit.toPlainText().strip(),
                     'status': 'new',
                     'parent_id': parent_id,
+                    'owner_id': self.current_user_id,
+                    'is_private': private_check.isChecked(),
                 }
-                add_task(session=session, task_data=task_data)
-            if parent_id:
-                logger.info(f"Вызов update_parent_status для parent_id={parent_id} (множественное создание)")
-                update_parent_status(session, parent_id)
-            self._load_tasks(self.current_project_id)
+                self.api_client.add_task(task_data, self.current_user_id)
+                self._load_tasks(self.current_project_id)
 
+            except Exception as error:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось добавить задачу:\n{error}')
+
+    @require_user
     def _add_multiple_tasks_dialog(self) -> None:
         """
         Диалог создания нескольких задач одновременно.
         Задачи вводятся построчно в формате "- Заголовок. Описание".
-        Можно указать родительскую задачу.
+        Можно указать родительскую задачу и приватность.
         """
 
         if self.current_project_id is None:
@@ -789,15 +972,26 @@ class MainWindow(QMainWindow):
         parent_combo = QComboBox()
         parent_combo.addItem('(проект, без родителя)', None)
         default_index = 0
-        with Session(self.engine) as session:
-            tasks = get_tasks_by_project(session, self.current_project_id, include_archived=True)
+        try:
+            tasks = self.api_client.get_tasks(
+                project_id=self.current_project_id,
+                user_id=self.current_user_id,
+                include_archived=True
+            )
             for idx, task in enumerate(tasks, start=1):
-                parent_combo.addItem(f'{task.title}', task.id)
-                if task.id == default_parent_id:
+                parent_combo.addItem(f'{task["title"]}', task["id"])
+                if task["id"] == default_parent_id:
                     default_index = idx
+        except Exception as error:
+            QMessageBox.warning(self, 'Ошибка загрузки задач',
+                                f'Не удалось загрузить список задач для выбора родителя:\n{error}')
+
         parent_combo.setCurrentIndex(default_index)
         parent_layout.addWidget(parent_combo)
         layout.addLayout(parent_layout)
+
+        private_check = QCheckBox('Сделать все задачи приватными (только для вас)')
+        layout.addWidget(private_check)
 
         button_box = self._create_button_box()
         button_box.accepted.connect(dialog.accept)
@@ -831,7 +1025,8 @@ class MainWindow(QMainWindow):
                 return
 
             parent_id = parent_combo.currentData()
-            with Session(self.engine) as session:
+            is_private = private_check.isChecked()
+            try:
                 for title, description in tasks_to_create:
                     task_data = {
                         'project_id': self.current_project_id,
@@ -839,14 +1034,16 @@ class MainWindow(QMainWindow):
                         'description': description,
                         'status': 'new',
                         'parent_id': parent_id,
+                        'owner_id': self.current_user_id,
+                        'is_private': is_private,
                     }
-                    add_task(session=session, task_data=task_data)
-                session.commit()
-            if parent_id:
-                update_parent_status(session, parent_id)
-            self._load_tasks(self.current_project_id)
-            QMessageBox.information(self, 'Готово', f'Добавлено {len(tasks_to_create)} задач.')
+                    self.api_client.add_task(task_data, self.current_user_id)
+                self._load_tasks(self.current_project_id)
+                QMessageBox.information(self, 'Готово', f'Добавлено {len(tasks_to_create)} задач.')
+            except Exception as error:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось добавить задачи:\n{error}')
 
+    @require_user
     def _delete_project(self) -> None:
         """ Удаляет выбранный проект после подтверждения пользователя """
 
@@ -864,11 +1061,14 @@ class MainWindow(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            with Session(self.engine) as session:
-                delete_project(session, project_id)
-            self._load_projects()
-            QMessageBox.information(self, 'Удалено', 'Проект удалён.')
+            try:
+                self.api_client.delete_project(project_id, self.current_user_id)
+                self._load_projects()
+                QMessageBox.information(self, 'Удалено', 'Проект удалён.')
+            except Exception as error:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось удалить проект:\n{error}')
 
+    @require_user
     def _delete_task(self) -> None:
         """
         Удаляет выбранную задачу после подтверждения.
@@ -884,6 +1084,8 @@ class MainWindow(QMainWindow):
             return
 
         child_count = current_item.childCount()
+        delete_children = False
+
         if child_count > 0:
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle('Удаление задачи')
@@ -896,23 +1098,30 @@ class MainWindow(QMainWindow):
             msg_box.addButton(btn_cancel, QMessageBox.ButtonRole.RejectRole)
             msg_box.setDefaultButton(btn_cancel)
             reply = msg_box.exec()
+
             if reply == QMessageBox.ButtonRole.RejectRole:
                 return
-            with Session(self.engine) as session:
-                if reply == QMessageBox.ButtonRole.YesRole:
-                    delete_task_with_children(session, task_id, delete_children=False)
-                else:
-                    delete_task_with_children(session, task_id, delete_children=True)
+            # Если выбран "С подзадачами" – удаляем всё поддерево
+            delete_children = (reply == QMessageBox.ButtonRole.NoRole)
+
+        else:
+            # Если подзадач нет, просто спрашиваем подтверждение
+            reply = self._question_dialog('Удаление задачи', 'Вы уверены, что хотите удалить эту задачу?')
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        try:
+            self.api_client.delete_task(
+                task_id=task_id,
+                user_id=self.current_user_id,
+                delete_children=delete_children
+            )
             self._load_tasks(self.current_project_id)
             QMessageBox.information(self, 'Удалено', 'Задача удалена.')
-        else:
-            reply = self._question_dialog('Удаление задачи', 'Вы уверены, что хотите удалить эту задачу?')
-            if reply == QMessageBox.StandardButton.Yes:
-                with Session(self.engine) as session:
-                    delete_task_with_children(session, task_id, delete_children=False)
-                self._load_tasks(self.current_project_id)
-                QMessageBox.information(self, 'Удалено', 'Задача удалена.')
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось удалить задачу:\n{error}')
 
+    @require_user
     def _archive_task(self) -> None:
         """
         Архивирует выбранную задачу и все ее подзадачи (рекурсивно).
@@ -927,16 +1136,15 @@ class MainWindow(QMainWindow):
         if task_id is None:
             return
 
-        with Session(self.engine) as session:
-            count = archive_subtree(session, task_id)
-            # Обновляем родителя (если есть)
-            task = get_task_by_id(session, task_id)
-            if task and task.parent_id:
-                update_parent_status(session, task.parent_id)
+        try:
+            result = self.api_client.archive_subtree(task_id, self.current_user_id)
+            count = result.get('archived_count', 0)
+            self._load_tasks(self.current_project_id)
+            QMessageBox.information(self, 'Архивация', f'Задача и её подзадачи ({count}) архивированы.')
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось архивировать задачу:\n{error}')
 
-        self._load_tasks(self.current_project_id)
-        QMessageBox.information(self, 'Архивация', f'Задача и её подзадачи ({count}) архивированы.')
-
+    @require_user
     def _unarchive_task(self) -> None:
         """
         Восстанавливает выбранную архивную задачу и все ее подзадачи (рекурсивно).
@@ -951,16 +1159,15 @@ class MainWindow(QMainWindow):
         if task_id is None:
             return
 
-        with Session(self.engine) as session:
-            count = unarchive_subtree(session, task_id)
-            # Обновляем родителя
-            task = get_task_by_id(session, task_id)
-            if task and task.parent_id:
-                update_parent_status(session, task.parent_id)
+        try:
+            result = self.api_client.unarchive_subtree(task_id, self.current_user_id)
+            count = result.get('unarchived_count', 0)
+            self._load_tasks(self.current_project_id)
+            QMessageBox.information(self, 'Восстановление', f'Задача и её подзадачи ({count}) восстановлены.')
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось восстановить задачу:\n{error}')
 
-        self._load_tasks(self.current_project_id)
-        QMessageBox.information(self, 'Восстановление', f'Задача и её подзадачи ({count}) восстановлены.')
-
+    @require_user
     def _toggle_favorite(self, item: QTreeWidgetItem, column: int = None) -> None:
         """
         Переключает статус избранного у выбранного проекта (по двойному клику).
@@ -972,18 +1179,22 @@ class MainWindow(QMainWindow):
         project_id = item.data(column, Qt.ItemDataRole.UserRole)
         if project_id is None:
             return
-        with Session(self.engine) as session:
-            toggle_favorite(session, project_id)
-        current_id = project_id
-        self._load_projects()
 
-        for i in range(self.project_tree.topLevelItemCount()):
-            it = self.project_tree.topLevelItem(i)
-            if it.data(0, Qt.ItemDataRole.UserRole) == current_id:
-                self.project_tree.setCurrentItem(it)
-                self._on_project_selected(it)
-                break
+        try:
+            self.api_client.toggle_project_favorite(project_id)
+            current_id = project_id
+            self._load_projects()
+            # Восстанавливаем выделение на том же проекте
+            for i in range(self.project_tree.topLevelItemCount()):
+                it = self.project_tree.topLevelItem(i)
+                if it.data(0, Qt.ItemDataRole.UserRole) == current_id:
+                    self.project_tree.setCurrentItem(it)
+                    self._on_project_selected(it)
+                    break
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось переключить избранное:\n{error}')
 
+    @require_user
     def _toggle_task_favorite(self, item: QListWidgetItem) -> None:
         """
         Переключает статус избранного у выбранной задачи (по двойному клику).
@@ -994,12 +1205,14 @@ class MainWindow(QMainWindow):
         task_id = item.data(0, Qt.ItemDataRole.UserRole)
         if task_id is None:
             return
-        with Session(self.engine) as session:
-            task = get_task_by_id(session, task_id)
-            if task:
-                update_task(session, task_id, is_favorite=not task.is_favorite)
-        self._load_tasks(self.current_project_id)
 
+        try:
+            self.api_client.toggle_task_favorite(task_id=task_id, user_id=self.current_user_id)
+            self._load_tasks(self.current_project_id)
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось переключить избранное у задачи:\n{error}')
+
+    @require_user
     def _refresh_technologies(self) -> None:
         """
         Обновляет список технологий путем повторной обработки файлы.
@@ -1009,23 +1222,41 @@ class MainWindow(QMainWindow):
         if self.current_project_id is None:
             QMessageBox.warning(self, 'Нет проекта', 'Сначала выберите проект.')
             return
-        with Session(self.engine) as session:
-            project = get_project_by_id(session, self.current_project_id)
+        try:
+            # Получаем актуальный проект с сервера (чтобы узнать путь)
+            project = self.api_client.get_project_by_id(self.current_project_id, self.current_user_id)
             if not project:
+                QMessageBox.warning(self, 'Ошибка', 'Проект не найден на сервере.')
                 return
-            if not project.path.strip():
+
+            project_path = project.get('path', '')
+            if not project_path.strip():
                 QMessageBox.warning(self, 'Нет пути',
                                     'У проекта не указан путь к папке. Невозможно обновить технологии.')
                 return
-            req_path = Path(project.path) / 'requirements.txt'
+
+            req_path = Path(project_path) / 'requirements.txt'
             if not req_path.exists():
-                QMessageBox.warning(self, 'Файл не найден', f'requirements.txt не найден в {project.path}')
+                QMessageBox.warning(self, 'Файл не найден', f'requirements.txt не найден в {project_path}')
                 return
+
             new_tech_json = parse_requirements(str(req_path))
-            update_project(session, self.current_project_id, technologies=new_tech_json)
+            if new_tech_json is None:
+                QMessageBox.warning(self, 'Ошибка', 'Не удалось распарсить requirements.txt.')
+                return
+
+            # Обновляем технологии через API
+            update_data = {'technologies': new_tech_json}
+            self.api_client.update_project(self.current_project_id, update_data, self.current_user_id)
+
+            # Обновляем отображение в интерфейсе
             self._show_project_info(self.current_project_id)
             QMessageBox.information(self, 'Готово', 'Технологии обновлены.')
 
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось обновить технологии:\n{error}')
+
+    @require_user
     def _edit_project_dialog(self) -> None:
         """
         открывает диалог редактирования проекта.
@@ -1037,55 +1268,67 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Нет проекта', 'Выберите проект.')
             return
         project_id = current_item.data(0, Qt.ItemDataRole.UserRole)
-        with Session(self.engine) as session:
-            project = get_project_by_id(session, project_id)
+        if not project_id:
+            return
+
+        try:
+            project = self.api_client.get_project_by_id(project_id, self.current_user_id)
             if not project:
+                QMessageBox.warning(self, 'Ошибка', 'Проект не найден на сервере.')
                 return
+
             dialog = QDialog(self)
-            dialog.setWindowTitle(f'Редактировать проект: {project.display_name}')
+            dialog.setWindowTitle(f'Редактировать проект: {project["display_name"]}')
             layout = QFormLayout(dialog)
 
-            display_name_edit = QLineEdit(project.display_name)
+            display_name_edit = QLineEdit(project["display_name"])
             layout.addRow('Отображаемое имя:', display_name_edit)
 
             path_layout = QHBoxLayout()
-            path_edit = QLineEdit(project.path)
+            path_edit = QLineEdit(project["path"])
             path_edit.setPlaceholderText('Если проект локальный')
             btn_choose_path = QPushButton('Выбрать папку...')
             path_layout.addWidget(path_edit)
             path_layout.addWidget(btn_choose_path)
             layout.addRow('Путь к проекту:', path_layout)
 
-            description_edit = QPlainTextEdit(project.description)
-            layout.addRow('Описание:', description_edit)
-
             def choose_new_path():
                 folder = QFileDialog.getExistingDirectory(dialog, 'Выбрать новую папку проекта')
                 if folder:
                     path_edit.setText(folder)
+
             btn_choose_path.clicked.connect(choose_new_path)
 
+            description_edit = QPlainTextEdit(project["description"])
+            layout.addRow('Описание:', description_edit)
+
+            # Технологии
             try:
-                techs = json.loads(project.technologies)
+                techs = json.loads(project["technologies"])
                 tech_text = ', '.join(techs)
             except json.JSONDecodeError:
                 tech_text = ''
-                logger.warning(f'Не удалось разобрать технологии проекта {project.id}: {project.technologies}')
+                logger.warning(f'Не удалось разобрать технологии проекта {project["id"]}: {project["technologies"]}')
                 QMessageBox.warning(
                     self,
                     'Ошибка данных',
-                    f'Не удалось прочитать список технологий для проекта "{project.display_name}".\n'
+                    f'Не удалось прочитать список технологий для проекта "{project["display_name"]}".\n'
                     'Вы можете ввести их заново вручную в поле ниже.'
                 )
             except Exception as error:
                 tech_text = ''
-                logger.warning(f'Не удалось разобрать технологии проекта {project.id}: {project.technologies}.'
+                logger.warning(f'Не удалось разобрать технологии проекта {project["id"]}: {project["technologies"]}.'
                                f'по причине: {error}')
 
             tech_edit = QPlainTextEdit()
             tech_edit.setPlainText(tech_text)
             tech_edit.setPlaceholderText('Введите технологии (каждая на новой строке или через запятую)')
             layout.addRow('Технологии:', tech_edit)
+
+            # Чекбокс приватности
+            private_check = QCheckBox('Приватный проект (только для вас)')
+            private_check.setChecked(project.get("is_private", False))
+            layout.addRow(private_check)
 
             button_box = self._create_button_box()
             button_box.accepted.connect(dialog.accept)
@@ -1106,15 +1349,23 @@ class MainWindow(QMainWindow):
                         if item:
                             tech_list.append(item)
                 tech_json = json.dumps(tech_list)
-                with Session(self.engine) as session2:
-                    update_project(session2, project_id,
-                                   display_name=new_display,
-                                   description=new_desc,
-                                   path=new_path,
-                                   technologies=tech_json)
+                is_private = private_check.isChecked()
+
+                update_data = {
+                    'display_name': new_display,
+                    'description': new_desc,
+                    'path': new_path,
+                    'technologies': tech_json,
+                    'is_private': is_private,
+                }
+                self.api_client.update_project(project_id, update_data, self.current_user_id)
                 self._load_projects()
                 QMessageBox.information(self, 'Готово', 'Проект обновлён.')
 
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить или обновить проект:\n{error}')
+
+    @require_user
     def _add_tasks_from_template(self) -> None:
         """ Открывает диалог выбора шаблонных задач для добавления в текущий проект. """
 
@@ -1141,32 +1392,49 @@ class MainWindow(QMainWindow):
             return
 
         dialog = TemplateTasksDialog(tasks_list, self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            selected = dialog.get_selected_tasks()
-            if not selected:
-                QMessageBox.information(self, 'Нет выбора', 'Вы не выбрали ни одной задачи.')
-                return
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
 
-            with Session(self.engine) as session:
-                for task_data in selected:
-                    is_fav = task_data.get('is_favorite', 'False')
-                    if isinstance(is_fav, str):
-                        is_fav = is_fav.lower() == 'true'
-                    task_data = {
-                        'project_id': self.current_project_id,
-                        'title': task_data.get('title', 'Без названия'),
-                        'description': task_data.get('description', ''),
-                        'note': task_data.get('note', ''),
-                        'code_snippet': task_data.get('code_snippet', ''),
-                        'status': task_data.get('status', 'new'),
-                        'priority_order': task_data.get('priority_order', 0),
-                        'is_favorite': is_fav,
-                    }
-                    add_task(session=session, task_data=task_data)
-                session.commit()
+        selected = dialog.get_selected_tasks()
+        if not selected:
+            QMessageBox.information(self, 'Нет выбора', 'Вы не выбрали ни одной задачи.')
+            return
 
+        # 2. Потом спрашиваем приватность
+        private_check = QCheckBox('Сделать все задачи приватными (только для вас)')
+        private_check.setChecked(False)
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle('Приватность задач')
+        msg_box.setText('Выберите приватность для добавляемых задач:')
+        msg_box.setCheckBox(private_check)
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        if msg_box.exec() != QMessageBox.StandardButton.Ok:
+            return
+
+        is_private = private_check.isChecked()
+
+        # 3. Добавляем задачи
+        try:
+            for task_data in selected:
+                is_fav = task_data.get('is_favorite', 'False')
+                if isinstance(is_fav, str):
+                    is_fav = is_fav.lower() == 'true'
+                task_dict = {
+                    'project_id': self.current_project_id,
+                    'title': task_data.get('title', 'Без названия'),
+                    'description': task_data.get('description', ''),
+                    'note': task_data.get('note', ''),
+                    'code_snippet': task_data.get('code_snippet', ''),
+                    'status': task_data.get('status', 'new'),
+                    'is_favorite': is_fav,
+                    'owner_id': self.current_user_id,
+                    'is_private': is_private,
+                }
+                self.api_client.add_task(task_dict, self.current_user_id)
             self._load_tasks(self.current_project_id)
             QMessageBox.information(self, 'Готово', f'Добавлено {len(selected)} задач.')
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось добавить задачи из шаблона:\n{error}')
 
     # -------- Настройки и справка --------
     def _open_settings_dialog(self) -> None:
@@ -1284,20 +1552,32 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Нет проекта', 'Выберите проект.')
             return
         project_id = current_item.data(0, Qt.ItemDataRole.UserRole)
-        with Session(self.engine) as session:
-            project = get_project_by_id(session, project_id)
-            if project:
-                if not project.path.strip():
-                    QMessageBox.warning(self, 'Нет пути', f'Проект "{project.display_name}" не привязан к папке.')
-                    return
-                pycharm_path = self.settings.value('pycharm_path', '').strip()
-                if not pycharm_path:
-                    QMessageBox.warning(self, 'Путь не указан', 'Не указан путь к PyCharm в настройках.')
-                    return
-                try:
-                    subprocess.Popen([pycharm_path, project.path])
-                except Exception as e:
-                    QMessageBox.critical(self, 'Ошибка', f'Не удалось открыть PyCharm:\n{e}')
+        if not project_id:
+            return
+
+        try:
+            project = self.api_client.get_project_by_id(project_id, self.current_user_id)
+            if not project:
+                QMessageBox.warning(self, 'Ошибка', 'Проект не найден на сервере.')
+                return
+
+            project_path = project.get('path', '').strip()
+            if not project_path:
+                QMessageBox.warning(self, 'Нет пути', f'Проект "{project["display_name"]}" не привязан к папке.')
+                return
+
+            pycharm_path = self.settings.value('pycharm_path', '').strip()
+            if not pycharm_path:
+                QMessageBox.warning(self, 'Путь не указан', 'Не указан путь к PyCharm в настройках.')
+                return
+
+            try:
+                subprocess.Popen([pycharm_path, project_path])
+            except Exception as e:
+                QMessageBox.critical(self, 'Ошибка', f'Не удалось открыть PyCharm:\n{e}')
+
+        except Exception as error:
+            QMessageBox.critical(self, 'Ошибка', f'Не удалось загрузить информацию о проекте:\n{error}')
 
     def keyPressEvent(self, event) -> None:
         """
