@@ -27,9 +27,9 @@ def get_logs_dir() -> Path:
     """
 
     if getattr(sys, 'frozen', False):
-        logs_dir = get_app_data_dir() / 'logs'
+        logs_dir = get_app_data_dir() / 'server_logs'
     else:
-        logs_dir = Path(__file__).parent / 'logs'
+        logs_dir = Path(__file__).parent / 'server_logs'
     logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir
 
@@ -46,9 +46,9 @@ def setup_logging(level: str = None) -> None:
 
     if level is None:
         if getattr(sys, 'frozen', False):
-            level = logging.INFO
+            level = logging.DEBUG
         else:
-            level = logging.INFO
+            level = logging.DEBUG
 
     logs_dir = get_logs_dir()
     today = datetime.now().strftime('%Y-%m-%d')

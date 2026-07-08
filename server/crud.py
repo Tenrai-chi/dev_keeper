@@ -24,7 +24,7 @@ def get_users(session: Session) -> list[Users]:
         .order_by(Users.name)
     )
     users = list(session.execute(smtm_users).scalars().all())
-
+    logger.info(f'Запрошено {len(users)} пользователей.')
     return users
 
 
@@ -43,6 +43,7 @@ def create_user(session: Session, user: UserCreate) -> Users:
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
+    logger.info(f'Создан новый пользователь ID {new_user.id} name {new_user.name}')
     return new_user
 
 
@@ -97,7 +98,8 @@ def get_project_by_id(session: Session, project_id: int, user_id: int
     if project:
         logger.info(f'Получен проект ID: {project.id}')
     else:
-        logger.warning(f'Не удалось получить проект ID: {project_id}')
+        logger.warning(f'Проект не найден или пользователь '
+                       f'ID: {user_id} не является его владельцем.')
     return project
 
 
@@ -144,12 +146,12 @@ def update_project(session: Session, project_id: int, project_update: ProjectUpd
 
     project = session.get(Project, project_id)
     if not project:
-        logger.info(f'Проект ID: {project_id} не найден')
+        logger.warning(f'Проект ID: {project_id} не найден')
         return None
 
     if project.is_private and project.owner_id != user_id:
-        logger.info(f'Попытка пользователя ID {user_id} изменить проект ID {project_id} '
-                    f'пользователя ID {project.owner_id}')
+        logger.warning(f'Попытка пользователя ID {user_id} изменить проект ID {project_id}, '
+                    f'владельцем которого является пользователь ID {project.owner_id}. Отказано.')
         return None
 
     update_data = project_update.model_dump(exclude_unset=True)
@@ -176,11 +178,15 @@ def delete_project(session: Session, project_id: int, user_id: int) -> bool:
 
     project = session.get(Project, project_id)
     if not project:
+        logger.warning(f'Проект ID: {project_id} не найден. Удаление невозможно.')
         return False
     if project.is_private and project.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID {user_id} удалить проект ID {project_id}, '
+                       f'владельцем которого является пользователь ID {project.id}. Отказано.')
         return False
     session.delete(project)
     session.commit()
+    logger.info(f'Проект ID: {project_id} был удален пользователем {user_id}.')
     return True
 
 
@@ -199,10 +205,12 @@ def toggle_project_favorite(session: Session, project_id: int) -> Project | None
 
     project = session.get(Project, project_id)
     if not project:
+        logger.warning(f'Проект ID: {project_id} не найден. Изменение избранного невозможно.')
         return None
     project.is_favorite = not project.is_favorite
     session.commit()
     session.refresh(project)
+    logger.info(f'Проект ID: {project_id} изменил свой статус избранного.')
     return project
 
 
@@ -229,6 +237,7 @@ def search_projects(session: Session, search_text: str, user_id: int) -> list[Pr
         if (search_lower in project.display_name.lower() or
                 search_lower in project.technologies.lower()):
             result_projects.append(project)
+    logger.info(f'Получены проекты по результату поиска: {search_text}')
     return result_projects
 
 
@@ -245,11 +254,20 @@ def toggle_private_project(session: Session, project_id: int, user_id: int) -> P
     """
 
     project = session.get(Project, project_id)
-    if not project or project.owner_id != user_id:
+    if not project:
+        logger.warning(f'Проект не найден. Изменить приватность не удалось.')
         return None
+
+    if project.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID: {user_id} изменить приватность '
+                       f'проекта ID: {project_id}, владельцем которого является '
+                       f'пользователь ID: {project.owner_id}. Отказано.')
+        return None
+
     project.is_private = not project.is_private
     session.commit()
     session.refresh(project)
+    logger.info(f'Проект ID: {project_id} изменил свою приватность.')
     return project
 
 
@@ -289,6 +307,8 @@ def get_tasks_by_project(session: Session, project_id: int,
         Task.is_favorite.desc()
     )
     tasks = list(session.execute(stmt_tasks).scalars().all())
+    logger.info(f'Запрошены задачи проекта ID {project_id}. '
+                f'Получено {len(tasks)} объектов.')
     return tasks
 
 
@@ -312,6 +332,10 @@ def get_task_by_id(session: Session, task_id: int, user_id: int) -> Task | None:
         )
     )
     task = session.execute(stmt_task).scalar_one_or_none()
+    if task:
+        logger.info(f'Получена информация по задаче ID: {task_id}')
+    else:
+        logger.warning(f'Задача ID: {task_id} не найдена или является приватной.')
     return task
 
 
@@ -342,6 +366,7 @@ def add_task(session: Session, task: TaskCreate) -> Task:
     session.refresh(new_task)
     if new_task.parent_id is not None:
         update_parent_status(session, new_task.parent_id)
+    logger.info(f'Создана задача ID: {new_task.id}')
     return new_task
 
 
@@ -361,9 +386,14 @@ def update_task(session: Session, task_id: int, task_update: TaskUpdate, user_id
 
     task = session.get(Task, task_id)
     if not task:
+        logger.warning(f'Задача ID: {task_id} не найдена. Изменить невозможно.')
         return None
+
     if task.is_private and task.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID: {user_id} изменить задачу ID: {task_id}, '
+                       f'владельцем которого является пользователь ID: {task.owner_id}. Отказано')
         return None
+
     update_data = task_update.model_dump(exclude_unset=True)
 
     new_status = update_data.get('status')
@@ -376,6 +406,7 @@ def update_task(session: Session, task_id: int, task_update: TaskUpdate, user_id
     task.updated_at = datetime.now()
     session.commit()
     session.refresh(task)
+    logger.info(f'Задача ID: {task_id} была изменена пользователем ID: {user_id}.')
     return task
 
 
@@ -394,9 +425,14 @@ def delete_task(session: Session, task_id: int, user_id: int, delete_children: b
 
     task = session.get(Task, task_id)
     if not task:
+        logger.warning(f'Задача ID: {task_id} не найдена. Удалить невозможно.')
         return False
+
     if task.is_private and task.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID: {user_id} удалить задачу ID {task_id}, '
+                       f'владельцем которой является пользователя ID: {task.owner_id}. Отказано')
         return False
+
     if delete_children:
         # Рекурсивно удаляем все подзадачи
         def delete_recursive(t):
@@ -404,11 +440,13 @@ def delete_task(session: Session, task_id: int, user_id: int, delete_children: b
                 delete_recursive(child)
             session.delete(t)
         delete_recursive(task)
+        logger.info(f'Задача ID: {task_id} была удалена вместе с дочерними задачами.')
     else:
         # Обнуляем parent_id у детей
         for child in session.query(Task).filter(Task.parent_id == task_id).all():
             child.parent_id = None
         session.delete(task)
+        logger.info(f'Задача ID: {task_id} была удалена.')
     session.commit()
     return True
 
@@ -425,10 +463,14 @@ def toggle_task_favorite(session: Session, task_id: int) -> Task | None:
 
     task = session.get(Task, task_id)
     if not task:
+        logger.warning(f'Задача ID: {task_id} не найдена. '
+                       f'Изменение статуса избранного невозможно.')
         return None
+
     task.is_favorite = not task.is_favorite
     session.commit()
     session.refresh(task)
+    logger.info(f'Задача ID: {task_id} изменила свой статус избранного.')
     return task
 
 
@@ -448,9 +490,14 @@ def change_task_status(session: Session, task_id: int, new_status: str, user_id:
 
     task = session.get(Task, task_id)
     if not task:
+        logger.warning(f'Задача ID: {task_id} не найдена. изменение статуса невозможно.')
         return None
+
     if task.is_private and task.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID: {user_id} изменить статус задачи ID: {task_id}, '
+                       f'владельцем которой является пользователь ID: {task.owner_id}')
         return None
+
     task.status = new_status
     if new_status in ('done', 'archived'):
         task.completed_at = datetime.now()
@@ -458,8 +505,9 @@ def change_task_status(session: Session, task_id: int, new_status: str, user_id:
         task.completed_at = None
     session.commit()
     session.refresh(task)
-    if task.parent_id is not None:
+    if task.parent_id:
         update_parent_status(session, task.parent_id)
+    logger.info(f'Задача ID: {task_id} изменила свой статус.')
     return task
 
 
@@ -475,15 +523,20 @@ def toggle_private_task(session: Session, task_id: int, user_id: int) -> Task | 
         Task | None: объект измененной задачи или None.
     """
 
-    print(f'Пришел запрос от пользователя ID {user_id}')
     task = session.get(Task, task_id)
-    print(f'Хозяин задачи ID {task.owner_id}')
-    if not task or task.owner_id != user_id:
-        print(f'Запрос от пользователя не имеющего доступ к  {task.id}')
+    if not task:
+        logger.warning(f'задача ID: {task_id} не найдена. Изменение приватности невозможна.')
+        return None
+
+    if task.owner_id != user_id:
+        logger.warning(f'Попытка пользователя ID: {user_id} изменить приватность задачи '
+                       f'ID: {task_id}, владельцем которой является пользователь '
+                       f'ID: {task.owner_id}. Отказано')
         return None
     task.is_private = not task.is_private
     session.commit()
     session.refresh(task)
+    logger.info(f'задача ID: {task.id} изменила свою приватность.')
     return task
 
 
@@ -505,7 +558,9 @@ def get_task_tree_ids(session: Session, task_id: int) -> list[int]:
         for child in children:
             ids.extend(collect_ids(child.id))
         return ids
-    return collect_ids(task_id)
+    collect = collect_ids(task_id)
+    logger.info(f'Получено {len(collect)} айди элементов.')
+    return collect
 
 
 def archive_subtree(session: Session, task_id: int, user_id: int) -> int:
@@ -525,8 +580,10 @@ def archive_subtree(session: Session, task_id: int, user_id: int) -> int:
     for tid in ids:
         task = session.get(Task, tid)
         if not task:
+            logger.warning(f'Задача из поддерева не найдена. Архивация отменена.')
             return 0
         if task.is_private and task.owner_id != user_id:
+            logger.warning(f'Задача ID {task.id} из поддерева приватная. Архивация отменена')
             return 0
     count = 0
     for tid in ids:
@@ -536,6 +593,7 @@ def archive_subtree(session: Session, task_id: int, user_id: int) -> int:
             task.completed_at = datetime.now()
             count += 1
     session.commit()
+    logger.info(f'Архивировано {count} задач.')
     return count
 
 
@@ -555,8 +613,10 @@ def unarchive_subtree(session: Session, task_id: int, user_id: int) -> int:
     for tid in ids:
         task = session.get(Task, tid)
         if not task:
+            logger.warning(f'Задача из поддерева не найдена. Реархивация отменена.')
             return 0
         if task.is_private and task.owner_id != user_id:
+            logger.warning(f'Задача ID {task.id} из поддерева приватная. Реархивация отменена')
             return 0
     count = 0
     for tid in ids:
@@ -566,47 +626,8 @@ def unarchive_subtree(session: Session, task_id: int, user_id: int) -> int:
             task.completed_at = None
             count += 1
     session.commit()
+    logger.info(f'Реархивировано {count} задач.')
     return count
-
-
-def delete_task_with_children(session: Session, task_id: int, user_id: int, delete_children: bool = False) -> bool:
-    """
-    Удаляет задачу. Если delete_children=True, удаляет все подзадачи (с проверкой прав).
-    Иначе только задачу, а подзадачи становятся корневыми.
-    Args:
-        session: сессия SQLAlchemy.
-        task_id: ID корневой задачи.
-        user_id: ID пользователя.
-        delete_children: True, если нужно удалить задачу с подзадачами.
-
-    Returns:
-        bool: True, если задача(и) была(и) удалена(ы)
-    """
-
-    task = session.get(Task, task_id)
-    if not task or task.owner_id != user_id:
-        return False
-    if delete_children:
-        # Собираем все ID поддерева (включая текущую)
-        ids = get_task_tree_ids(session, task_id)
-        # Проверяем права на все задачи
-        for tid in ids:
-            t = session.get(Task, tid)
-            if not t or t.owner_id != user_id:
-                return False
-
-        def delete_recursive(t):
-            for child in session.query(Task).filter(Task.parent_id == t.id).all():
-                delete_recursive(child)
-            session.delete(t)
-        delete_recursive(task)
-    else:
-        # Обнуляем parent_id у детей
-        for child in session.query(Task).filter(Task.parent_id == task_id).all():
-            child.parent_id = None
-        session.delete(task)
-    session.commit()
-    return True
 
 
 def update_parent_status(session: Session, task_id: int) -> None:

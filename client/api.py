@@ -282,6 +282,7 @@ class APIClient:
         Returns:
             dict: обновлённая задача с новым значением is_favorite.
         """
+
         logger.info(f'Запрос на изменение приватности ID пользователя {user_id}')
         return self._request('POST', f'/tasks/{task_id}/favorite', params={'user_id': user_id})
 

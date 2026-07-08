@@ -1072,7 +1072,7 @@ class MainWindow(QMainWindow):
     def _delete_task(self) -> None:
         """
         Удаляет выбранную задачу после подтверждения.
-            Если у задачи есть подзадачи, предлагает удалить только ее или всю ветку.
+       Если у задачи есть подзадачи, предлагает удалить только ее или всю ветку.
         """
 
         current_item = self.task_tree.currentItem()
@@ -1099,10 +1099,14 @@ class MainWindow(QMainWindow):
             msg_box.setDefaultButton(btn_cancel)
             reply = msg_box.exec()
 
-            if reply == QMessageBox.ButtonRole.RejectRole:
+            clicked = msg_box.clickedButton()
+            if clicked == btn_cancel:
                 return
+            elif clicked == btn_with_children:
+                delete_children = True
+            else:
+                delete_children = False
             # Если выбран "С подзадачами" – удаляем всё поддерево
-            delete_children = (reply == QMessageBox.ButtonRole.NoRole)
 
         else:
             # Если подзадач нет, просто спрашиваем подтверждение
@@ -1760,7 +1764,7 @@ class TemplateManagerDialog(QDialog):
         btn_layout.addWidget(btn_edit)
 
         btn_delete = QPushButton('🗑️ Удалить')
-        btn_delete.clicked.connect(self._delete_task)
+        btn_delete.clicked.connect(self._delete_task_template)
         btn_layout.addWidget(btn_delete)
 
         btn_layout.addStretch()
@@ -1822,7 +1826,7 @@ class TemplateManagerDialog(QDialog):
             self._save_data()
             self._refresh_list()
 
-    def _delete_task(self) -> None:
+    def _delete_task_template(self) -> None:
         """ Удаляет выбранный шаблон после подтверждения. """
 
         current_row = self.list_widget.currentRow()
