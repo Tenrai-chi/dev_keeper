@@ -24,7 +24,7 @@ from client.help_content import get_help_html
 from client.themes import get_dark_theme, get_light_theme
 from client.api import APIClient
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Client_GUI')
 program_version = '1.0'
 
 

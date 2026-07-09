@@ -19,17 +19,17 @@ def get_app_data_dir() -> Path:
 
 def get_logs_dir() -> Path:
     """
-    Возвращает путь к папке logs.
-    - При разработке: logs/ (рядом с файлом)
+    Возвращает путь к папке client_logs.
+    - При разработке: client_logs/ (рядом с файлом)
     - В собранном приложении: %APPDATA%/DevKeeper/logs
     Returns:
         Path: путь к папке с логами
     """
 
     if getattr(sys, 'frozen', False):
-        logs_dir = get_app_data_dir() / 'logs'
+        logs_dir = get_app_data_dir() / 'client_logs'
     else:
-        logs_dir = Path(__file__).parent / 'logs'
+        logs_dir = Path(__file__).parent / 'client_logs'
     logs_dir.mkdir(parents=True, exist_ok=True)
     return logs_dir
 

@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Client_COMMON')
 
 STATUS_CHOICES: List[Tuple[str, str]] = [
     ('Новое', 'new'),
@@ -58,6 +58,7 @@ def get_app_data_dir() -> Path:
 
 def get_db_path() -> Path:
     """
+    todo в клиент-серверной версии не нужен
     Возвращает путь к файлу БД.
     - При разработке: data/projects.db (рядом с utils.py)
     - При установке: %APPDATA%/DevKeeper/projects.db

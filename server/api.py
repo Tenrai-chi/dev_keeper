@@ -11,7 +11,7 @@ from server.schemas import (
 from server.database import SessionLocal
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Server_API')
 
 
 # ---------- Зависимости ----------

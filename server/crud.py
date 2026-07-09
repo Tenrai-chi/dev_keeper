@@ -6,7 +6,7 @@ from datetime import datetime
 from server.database import Users, Task, Project
 from server.schemas import UserCreate, ProjectCreate, ProjectUpdate, TaskCreate, TaskUpdate
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Server_CRUD')
 
 
 # ---------- Пользователи ----------

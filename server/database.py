@@ -9,7 +9,7 @@ from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
 from server.config import settings
 
 Base = declarative_base()
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Server_DATABASE')
 
 
 class Users(Base):

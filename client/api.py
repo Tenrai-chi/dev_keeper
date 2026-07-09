@@ -1,7 +1,7 @@
 import requests
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('Client_API')
 
 
 class APIClient:
@@ -17,11 +17,13 @@ class APIClient:
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
+        logger.info(f'API клиент инициализирован с URL: {self.base_url}')
 
-    def update_base_url(self, new_url: str):
-        """Обновляет базовый URL (например, при смене настроек)."""
-        
+    def update_base_url(self, new_url: str) -> None:
+        """ Обновляет базовый URL (например, при смене настроек). """
+
         self.base_url = new_url.rstrip('/')
+        logger.info(f'Обновлён базовый URL клиента: {self.base_url}')
 
     def _request(self, method: str, endpoint: str, params: dict | None = None,
                  data: dict | None = None) -> dict | list[dict]:
@@ -38,7 +40,8 @@ class APIClient:
             dict | list[dict]: декодированный JSON-ответ сервера (словарь или список).
         """
 
-        url = f"{self.base_url}/{endpoint.lstrip('/')}"
+        url = f'{self.base_url}/{endpoint.lstrip("/")}'
+        logger.debug(f'Отправка {method} запроса к {url}, params={params}, data={data}')
         try:
             response = self.session.request(
                 method=method,
@@ -48,7 +51,9 @@ class APIClient:
                 timeout=10
             )
             response.raise_for_status()
-            return response.json() if response.text else {}
+            result = response.json() if response.text else {}
+            logger.debug(f'Успешный ответ от {url}: {result}')
+            return result
 
         except requests.exceptions.RequestException as error:
             logger.error(f'Ошибка запроса к {url}: {error}')
@@ -65,6 +70,7 @@ class APIClient:
 
     def test_connection(self) -> bool:
         """
+        todo использовать при изменения настроек подключения
         Проверяет доступность сервера (запрос к корневому эндпоинту).
         Returns:
             bool: True, если получен ответ, False, если произошла ошибка.
@@ -80,6 +86,7 @@ class APIClient:
     def get_users(self) -> list[dict]:
         """ Возвращает список всех пользователей. """
 
+        logger.debug('Запрос списка пользователей')
         return self._request('GET', '/users/')
 
     def create_user(self, name: str) -> dict:
@@ -92,6 +99,7 @@ class APIClient:
             dict: данные созданного пользователя.
         """
 
+        logger.info(f'Создание пользователя с именем "{name}"')
         return self._request('POST', '/users/', data={'name': name})
 
     # ---------- Проекты ----------
@@ -105,6 +113,7 @@ class APIClient:
             list[dict]: список проектов, отсортированных по избранному и имени.
         """
 
+        logger.debug(f'Запрос проектов для пользователя {user_id}')
         return self._request('GET', '/projects/', params={'user_id': user_id})
 
     def get_project_by_id(self, project_id: int, user_id: int) -> dict:
@@ -117,7 +126,8 @@ class APIClient:
         Returns:
             dict: информация о проекте.
         """
-        
+
+        logger.debug(f'Запрос проекта {project_id} для пользователя {user_id}')
         return self._request('GET', f'/projects/{project_id}', 
                              params={'user_id': user_id})
 
@@ -132,6 +142,7 @@ class APIClient:
             dict: созданный проект.
         """
 
+        logger.info(f'Создание проекта пользователем {user_id}')
         return self._request('POST', '/projects/', params={'user_id': user_id}, data=data)
 
     def update_project(self, project_id: int, data: dict, user_id: int) -> dict:
@@ -146,6 +157,7 @@ class APIClient:
             dict: измененный проект.
         """
 
+        logger.info(f'Обновление проекта {project_id} пользователем {user_id}')
         return self._request('PUT', f'/projects/{project_id}', params={'user_id': user_id}, data=data)
 
     def delete_project(self, project_id: int, user_id: int) -> dict:
@@ -158,7 +170,8 @@ class APIClient:
         Returns:
             dict: 'success': True, если успешно удалено, иначе придет ошибка
         """
-        
+
+        logger.info(f'Удаление проекта {project_id} пользователем {user_id}')
         return self._request('DELETE', f'/projects/{project_id}', params={'user_id': user_id})
 
     def toggle_project_favorite(self, project_id: int) -> dict:
@@ -171,6 +184,7 @@ class APIClient:
             dict: обновлённый проект с новым значением is_favorite.
         """
 
+        logger.info(f'Переключение избранного для проекта {project_id}')
         return self._request('POST', f'/projects/{project_id}/favorite')
 
     def toggle_project_private(self, project_id: int, user_id: int) -> dict:
@@ -184,6 +198,7 @@ class APIClient:
             dict: обновлённый проект с новым значением is_private.
         """
 
+        logger.info(f'Переключение приватности проекта {project_id} пользователем {user_id}')
         return self._request('POST', f'/projects/{project_id}/toggle-private',
                              params={'user_id': user_id})
 
@@ -198,6 +213,7 @@ class APIClient:
             list[dict]: список проектов, соответствующих запросу.
         """
 
+        logger.debug(f'Поиск проектов по запросу "{query}" для пользователя {user_id}')
         return self._request('GET', '/projects/search/', params={'q': query, 'user_id': user_id})
 
     # ---------- Задачи ----------
@@ -212,7 +228,8 @@ class APIClient:
         Returns:
             list[dict]: список задач, отсортированных по статусу и избранному.
         """
-
+        logger.debug(f'Запрос задач проекта {project_id} для пользователя {user_id}, '
+                     f'include_archived={include_archived}')
         return self._request('GET', '/tasks/',
                              params={'project_id': project_id, 'user_id': user_id,
                                      'include_archived': str(include_archived).lower()})
@@ -228,6 +245,7 @@ class APIClient:
             dict: объект задачи.
         """
 
+        logger.debug(f'Запрос задачи {task_id} для пользователя {user_id}')
         return self._request('GET', f'/tasks/{task_id}', params={'user_id': user_id})
 
     def add_task(self, data: dict, user_id: int) -> dict:
@@ -241,6 +259,7 @@ class APIClient:
             dict: созданная задача с ID и датами.
         """
 
+        logger.info(f'Создание задачи в проекте {data.get('project_id')} пользователем {user_id}')
         return self._request('POST', '/tasks/', params={'user_id': user_id}, data=data)
 
     def update_task(self, task_id: int, data: dict, user_id: int) -> dict:
@@ -255,6 +274,7 @@ class APIClient:
             dict: обновлённая задача.
         """
 
+        logger.info(f'Обновление задачи {task_id} пользователем {user_id}')
         return self._request('PUT', f'/tasks/{task_id}', params={'user_id': user_id}, data=data)
 
     def delete_task(self, task_id: int, user_id: int, delete_children: bool = False) -> dict:
@@ -269,6 +289,7 @@ class APIClient:
             dict: {'success': True} при успехе.
         """
 
+        logger.info(f'Удаление задачи {task_id} пользователем {user_id}, delete_children={delete_children}')
         return self._request('DELETE', f'/tasks/{task_id}',
                              params={'user_id': user_id, 'delete_children': str(delete_children).lower()})
 
@@ -283,7 +304,7 @@ class APIClient:
             dict: обновлённая задача с новым значением is_favorite.
         """
 
-        logger.info(f'Запрос на изменение приватности ID пользователя {user_id}')
+        logger.info(f'Переключение избранного для задачи {task_id} пользователем {user_id}')
         return self._request('POST', f'/tasks/{task_id}/favorite', params={'user_id': user_id})
 
     def toggle_task_private(self, task_id: int, user_id: int) -> dict:
@@ -297,6 +318,7 @@ class APIClient:
             dict: обновлённая задача с новым значением is_private.
         """
 
+        logger.info(f'Переключение приватности задачи {task_id} пользователем {user_id}')
         return self._request('POST', f'/tasks/{task_id}/toggle-private', params={'user_id': user_id})
 
     def archive_subtree(self, task_id: int, user_id: int) -> dict:
@@ -307,9 +329,10 @@ class APIClient:
             user_id: ID текущего пользователя. 
 
         Returns:
-            dict: archived_count - количество зархивированных задач
+            dict: archived_count - количество архивированных задач
         """
 
+        logger.info(f'Архивация поддерева задачи {task_id} пользователем {user_id}')
         return self._request('POST', f'/tasks/{task_id}/archive', params={'user_id': user_id})
 
     def unarchive_subtree(self, task_id: int, user_id: int) -> dict:
@@ -322,7 +345,8 @@ class APIClient:
         Returns:
             dict: unarchived_count - количество разархивированных задач
         """
-        
+
+        logger.info(f'Восстановление поддерева задачи {task_id} пользователем {user_id}')
         return self._request('POST', f'/tasks/{task_id}/unarchive', params={'user_id': user_id})
 
     def change_task_status(self, task_id: int, new_status: str, user_id: int) -> dict:
@@ -336,6 +360,7 @@ class APIClient:
         Returns:
             dict: измененная задача.
         """
-        
+
+        logger.info(f'Изменение статуса задачи {task_id} на "{new_status}" пользователем {user_id}')
         return self._request('POST', f'/tasks/{task_id}/status',
                              params={'new_status': new_status, 'user_id': user_id})

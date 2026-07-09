@@ -19,3 +19,6 @@ database.db
 build/
 dist/
 
+server_logs/
+client_logs/
+
