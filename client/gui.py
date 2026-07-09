@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
 
         self.current_project_id = None
         self.current_task_id = None
-        self.settings = QSettings('DevKeeper', 'Settings')
+        self.settings = QSettings('DevKeeperClient', 'Settings')
         self.current_theme = self.settings.value('theme', 'system', type=str)
         self.current_search_text = ''
         self.right_splitter = None
@@ -63,6 +63,8 @@ class MainWindow(QMainWindow):
         # Настройка подключения к API
         self.server_url = self.settings.value('server_url', 'http://localhost:8000/api', type=str)
         self.api_client = APIClient(str(self.server_url))
+        if not self._ensure_connection():
+            sys.exit()
 
         # Настройка пользователя
         self.current_user_id = int(self.settings.value('user_id', None, type=int))
@@ -95,6 +97,47 @@ class MainWindow(QMainWindow):
         self._load_projects()
 
     # -------- Подгрузка данных и подключение пользователей --------
+    def _ensure_connection(self) -> bool:
+        """
+        Проверяет подключение к серверу. Если сервер недоступен, показывает диалог настройки.
+        Возвращает True, если подключение установлено, иначе False.
+        """
+        if self.api_client.test_connection():
+            logger.info('Подключение к серверу установлено.')
+            return True
+
+        # Если подключения нет – показываем диалог настройки
+        while True:
+            reply = QMessageBox.question(
+                self,
+                'Нет подключения',
+                'Не удалось подключиться к серверу. Хотите настроить подключение?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                QMessageBox.critical(self, 'Ошибка', 'Без подключения к серверу приложение не может работать.')
+                return False
+
+            # Показываем диалог настройки
+            dialog = ConnectionSettingsDialog(self, self.api_client)
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_url = dialog.get_url()
+                if not new_url:
+                    QMessageBox.warning(self, 'Ошибка', 'URL не может быть пустым.')
+                    continue
+                self.api_client.update_base_url(new_url)
+                if self.api_client.test_connection():
+                    self.settings.setValue('server_url', new_url)
+                    logger.info(f'Подключение к серверу установлено: {new_url}')
+                    return True
+                else:
+                    QMessageBox.warning(self, 'Ошибка',
+                                        'Не удалось подключиться к серверу. Проверьте настройки и попробуйте снова.')
+            else:
+                continue
+
+            return False
+
     def _select_user(self):
         """ Диалог выбора или создания пользователя. """
 
@@ -689,6 +732,12 @@ class MainWindow(QMainWindow):
                 self.detail_note.setPlainText(task['note'])
                 self.detail_code.setPlainText(task['code_snippet'])
                 self.detail_private_check.setChecked(task['is_private'])
+
+                # === НОВАЯ ЛОГИКА ===
+                is_owner = task.get('owner_id') == self.current_user_id
+                self.detail_private_check.setVisible(is_owner)
+                self.detail_private_check.setEnabled(is_owner)
+
                 display_name = status_to_display(task['status'])
                 idx = self.status_combo.findText(display_name)
                 if idx >= 0:
@@ -1331,7 +1380,9 @@ class MainWindow(QMainWindow):
 
             # Чекбокс приватности
             private_check = QCheckBox('Приватный проект (только для вас)')
-            private_check.setChecked(project.get("is_private", False))
+            private_check.setChecked(project.get('is_private', False))
+            private_check.setVisible(project.get('owner_id') == self.current_user_id)
+            private_check.setEnabled(project.get('owner_id') == self.current_user_id)
             layout.addRow(private_check)
 
             button_box = self._create_button_box()
@@ -1446,10 +1497,18 @@ class MainWindow(QMainWindow):
 
         dialog = SettingsDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            theme, use_pycharm, pycharm_path = dialog.get_settings()
+            theme, use_pycharm, pycharm_path, server_url  = dialog.get_settings()
             self.settings.setValue('theme', theme)
             self.settings.setValue('use_pycharm', use_pycharm)
             self.settings.setValue('pycharm_path', pycharm_path)
+            if server_url != self.api_client.base_url:
+                self.api_client.update_base_url(server_url)
+                self.settings.setValue('server_url', server_url)
+                if not self.api_client.test_connection():
+                    QMessageBox.warning(self, 'Ошибка',
+                                        'Не удалось подключиться к новому серверу. Проверьте настройки.')
+                else:
+                    self._load_projects()
             self._apply_theme(theme)
             self._update_pycharm_button_visibility()
 
@@ -1977,6 +2036,16 @@ class SettingsDialog(QDialog):
         # Связываем чекбокс с видимостью контейнера
         self.use_pycharm_check.toggled.connect(self.pycharm_container.setVisible)
 
+        server_layout = QHBoxLayout()
+        server_layout.addWidget(QLabel('Сервер:'))
+        self.server_url_edit = QLineEdit()
+        self.server_url_edit.setText(parent.settings.value('server_url', 'http://localhost:8000/api', type=str))
+        server_layout.addWidget(self.server_url_edit)
+        btn_test_server = QPushButton('Проверить')
+        btn_test_server.clicked.connect(self._test_server_connection)
+        server_layout.addWidget(btn_test_server)
+        layout.addLayout(server_layout)
+
         # Кнопки ОК/Отмена
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         button_box.accepted.connect(self.accept)
@@ -2006,7 +2075,23 @@ class SettingsDialog(QDialog):
         theme = index_map.get(theme_index, 'system')
         use_pycharm = self.use_pycharm_check.isChecked()
         pycharm_path = self.pycharm_path_edit.text().strip()
-        return theme, use_pycharm, pycharm_path
+        server_url = self.server_url_edit.text().strip()
+        return theme, use_pycharm, pycharm_path, server_url
+
+    def _test_server_connection(self):
+        """ Проверка подключения к серверу. """
+
+        url = self.server_url_edit.text().strip()
+        if not url:
+            QMessageBox.warning(self, 'Ошибка', 'Введите URL.')
+            return
+        # Создаём временный клиент для проверки
+        from client.api import APIClient
+        temp_client = APIClient(url)
+        if temp_client.test_connection():
+            QMessageBox.information(self, 'Успех', 'Подключение к серверу установлено.')
+        else:
+            QMessageBox.critical(self, 'Ошибка', 'Не удалось подключиться к серверу.')
 
 
 class HelpDialog(QDialog):
@@ -2039,3 +2124,64 @@ class HelpDialog(QDialog):
         btn_close = QPushButton('Закрыть')
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignCenter)
+
+
+class ConnectionSettingsDialog(QDialog):
+    """Диалог настройки подключения к серверу."""
+
+    def __init__(self, parent=None, api_client=None):
+        super().__init__(parent)
+        self.api_client = api_client
+        self.setWindowTitle('Настройка подключения')
+        self.setMinimumWidth(450)
+
+        layout = QVBoxLayout(self)
+
+        label = QLabel('Введите адрес сервера (например, http://192.168.1.100:8000/api):')
+        layout.addWidget(label)
+
+        self.url_edit = QLineEdit()
+        if api_client:
+            self.url_edit.setText(api_client.base_url)
+        layout.addWidget(self.url_edit)
+
+        # Кнопка проверки
+        btn_test = QPushButton('Проверить подключение')
+        btn_test.clicked.connect(self._test_connection)
+        layout.addWidget(btn_test)
+
+        self.status_label = QLabel('')
+        self.status_label.setStyleSheet('color: gray;')
+        layout.addWidget(self.status_label)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText('ОК')
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText('Отмена')
+        layout.addWidget(button_box)
+
+    def _test_connection(self):
+        url = self.url_edit.text().strip()
+        if not url:
+            self.status_label.setText('Введите URL.')
+            self.status_label.setStyleSheet('color: red;')
+            return
+        # Сохраняем текущий URL в клиенте для проверки
+        old_url = self.api_client.base_url
+        self.api_client.base_url = url
+        try:
+            if self.api_client.test_connection():
+                self.status_label.setText('✅ Подключение установлено!')
+                self.status_label.setStyleSheet('color: green;')
+            else:
+                self.status_label.setText('❌ Не удалось подключиться к серверу.')
+                self.status_label.setStyleSheet('color: red;')
+        except Exception as e:
+            self.status_label.setText(f'❌ Ошибка: {e}')
+            self.status_label.setStyleSheet('color: red;')
+        finally:
+            self.api_client.base_url = old_url
+
+    def get_url(self) -> str:
+        return self.url_edit.text().strip()

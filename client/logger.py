@@ -20,8 +20,8 @@ def get_app_data_dir() -> Path:
 def get_logs_dir() -> Path:
     """
     Возвращает путь к папке client_logs.
-    - При разработке: client_logs/ (рядом с файлом)
-    - В собранном приложении: %APPDATA%/DevKeeper/logs
+    - При разработке: client/client_logs/
+    - В собранном приложении: %APPDATA%/DevKeeper/client_logs
     Returns:
         Path: путь к папке с логами
     """
@@ -38,17 +38,17 @@ def setup_logging(level: str = None) -> None:
     """
     Настраивает логирование: вывод в консоль и в файл с ротацией по дням.
     Если уровень не указан, то:
-        - для .exe: WARNING
-        - для скрипта: INFO
+        - для .exe: INFO
+        - для скрипта: DEBUG
     Args:
         level: заданный уровень логирования
     """
 
     if level is None:
         if getattr(sys, 'frozen', False):
-            level = logging.WARNING
-        else:
             level = logging.INFO
+        else:
+            level = logging.DEBUG
 
     logs_dir = get_logs_dir()
     today = datetime.now().strftime('%Y-%m-%d')
@@ -77,3 +77,5 @@ def setup_logging(level: str = None) -> None:
         console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
+
+    logging.info(f'Клиент: логирование настроено. Уровень: {logging.getLevelName(level)}. Файл: {log_file}')

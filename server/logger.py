@@ -20,8 +20,8 @@ def get_app_data_dir() -> Path:
 def get_logs_dir() -> Path:
     """
     Возвращает путь к папке server_logs.
-    - При разработке: server_logs/ (рядом с файлом)
-    - В собранном приложении: %APPDATA%/DevKeeper/logs
+    - При разработке: server/server_logs/
+    - В собранном приложении: %APPDATA%/DevKeeper/server_logs
     Returns:
         Path: путь к папке с логами
     """
@@ -39,14 +39,14 @@ def setup_logging(level: str = None) -> None:
     Настраивает логирование: вывод в консоль и в файл с ротацией по дням.
     Если уровень не указан, то:
         - для .exe: INFO
-        - для скрипта: INFO
+        - для скрипта: DEBUG
     Args:
         level: заданный уровень логирования
     """
 
     if level is None:
         if getattr(sys, 'frozen', False):
-            level = logging.DEBUG
+            level = logging.INFO
         else:
             level = logging.DEBUG
 

@@ -30,7 +30,7 @@ def get_dev_dir() -> Path:
     if is_frozen():
         return Path(sys.executable).parent
     else:
-        return Path(__file__).parent.parent
+        return Path(__file__).parent
 
 
 def get_internal_dir() -> Path:
@@ -49,9 +49,9 @@ def get_app_data_dir() -> Path:
     """
 
     if sys.platform == 'win32':
-        base = Path(os.environ.get('APPDATA', '')) / 'DevKeeper'
+        base = Path(os.environ.get('APPDATA', '')) / 'DevKeeperClient'
     else:
-        base = Path.home() / '.local' / 'share' / 'DevKeeper'
+        base = Path.home() / '.local' / 'share' / 'DevKeeperClient'
     base.mkdir(parents=True, exist_ok=True)
     return base
 
