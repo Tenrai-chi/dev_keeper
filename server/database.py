@@ -21,6 +21,9 @@ class Users(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
 
+    def __repr__(self):
+        return f'<Пользователь {self.name}>'
+
 
 class Project(Base):
     """ Таблица с данными о проектах. """
