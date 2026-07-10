@@ -40,6 +40,11 @@
     pyinstaller DevKeeper.spec
     ```
 
+## 💻 Ветки разработки:
+- **Локальная версия** для одного пользователя: [local](https://github.com/Tenrai-chi/dev_keeper/tree/local)
+- **Клиент-серверная версия** для локальной сети: [network](https://github.com/Tenrai-chi/dev_keeper/tree/network)
+
+
 ## 📂 Структура данных
 - База данных – SQLite, хранится в %APPDATA%\DevKeeper\projects.db. 
 - Шаблоны задач – %APPDATA%\DevKeeper\default_tasks.json.
