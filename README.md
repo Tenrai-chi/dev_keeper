@@ -58,9 +58,9 @@
     pyinstaller server.spec
     ```
 
-## Ветки разработки:
-- Локальная версия для одного пользователя: [local](https://github.com/Tenrai-chi/dev_keeper/tree/local)
-- Клиент-серверная версия для локальной сети: [local](https://github.com/Tenrai-chi/dev_keeper/tree/network)
+## 💻 Ветки разработки:
+- **Локальная версия** для одного пользователя: [local](https://github.com/Tenrai-chi/dev_keeper/tree/local)
+- **Клиент-серверная версия** для локальной сети: [network](https://github.com/Tenrai-chi/dev_keeper/tree/network)
 
 ## 📂 Структура данных
 - Клиент – данные хранятся в %APPDATA%\DevKeeperClient\ (база данных projects.db, шаблоны default_tasks.json, логи).
